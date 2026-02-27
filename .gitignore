@@ -1,0 +1,80 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments and env files
+.env
+.env.*
+venv/
+env/
+.venv/
+venv*/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Pytest cache
+.pytest_cache/
+
+# Coverage reports
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Type check caches
+.mypy_cache/
+.pyrightcache/
+
+# IDE/editor dirs
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Node/npm
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Logs
+*.log
+
+# Static/build artifacts
+/app/static/build/
+/assets/build/
+build/
+dist/
+
+# Audio/temporary files common in this project
+*.wav
+*.mp3
+*.ogg
+*.pcm
+
+# Python bytecode and caches
+*.pyc
+*.pyo
+
+# Misc
+*.egg
+*.egg-info
+pip-wheel-metadata/
+
+# Tests output
+tests/_output/
+
