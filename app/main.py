@@ -118,6 +118,11 @@ async def websocket_endpoint(
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             session_resumption=types.SessionResumptionConfig(),
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    disabled=True
+                )
+            ),
             proactivity=(
                 types.ProactivityConfig(proactive_audio=True) if proactivity else None
             ),
@@ -138,6 +143,11 @@ async def websocket_endpoint(
             input_audio_transcription=None,
             output_audio_transcription=None,
             session_resumption=types.SessionResumptionConfig(),
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    disabled=True
+                )
+            ),
         )
         logger.debug(
             f"Half-cascade model detected: {model_name}, "
@@ -191,8 +201,17 @@ async def websocket_endpoint(
 
                 json_message = json.loads(text_data)
 
+                # Handle activity signals (client-side VAD)
+                if json_message.get("type") == "activity_start":
+                    logger.debug("Received activity_start signal")
+                    live_request_queue.send_activity_start()
+
+                elif json_message.get("type") == "activity_end":
+                    logger.debug("Received activity_end signal")
+                    live_request_queue.send_activity_end()
+
                 # Extract text from JSON and send to LiveRequestQueue
-                if json_message.get("type") == "text":
+                elif json_message.get("type") == "text":
                     logger.debug(f"Sending text content: {json_message['text']}")
                     content = types.Content(
                         parts=[types.Part(text=json_message["text"])]

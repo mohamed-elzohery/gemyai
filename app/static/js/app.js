@@ -14,16 +14,24 @@ let is_audio = false;
 
 // Get checkbox elements for RunConfig options
 const enableProactivityCheckbox = document.getElementById("enableProactivity");
-const enableAffectiveDialogCheckbox = document.getElementById("enableAffectiveDialog");
+const enableAffectiveDialogCheckbox = document.getElementById(
+  "enableAffectiveDialog",
+);
 
 // Reconnect WebSocket when RunConfig options change
 function handleRunConfigChange() {
   if (websocket && websocket.readyState === WebSocket.OPEN) {
     addSystemMessage("Reconnecting with updated settings...");
-    addConsoleEntry('outgoing', 'Reconnecting due to settings change', {
-      proactivity: enableProactivityCheckbox.checked,
-      affective_dialog: enableAffectiveDialogCheckbox.checked
-    }, '🔄', 'system');
+    addConsoleEntry(
+      "outgoing",
+      "Reconnecting due to settings change",
+      {
+        proactivity: enableProactivityCheckbox.checked,
+        affective_dialog: enableAffectiveDialogCheckbox.checked,
+      },
+      "🔄",
+      "system",
+    );
     websocket.close();
     // connectWebsocket() will be called by onclose handler after delay
   }
@@ -37,7 +45,14 @@ enableAffectiveDialogCheckbox.addEventListener("change", handleRunConfigChange);
 function getWebSocketUrl() {
   // Use wss:// for HTTPS pages, ws:// for HTTP (localhost development)
   const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const baseUrl = wsProtocol + "//" + window.location.host + "/ws/" + userId + "/" + sessionId;
+  const baseUrl =
+    wsProtocol +
+    "//" +
+    window.location.host +
+    "/ws/" +
+    userId +
+    "/" +
+    sessionId;
   const params = new URLSearchParams();
 
   // Add proactivity option if checked
@@ -76,12 +91,13 @@ let hasOutputTranscriptionInTurn = false; // Track if output transcription deliv
 // Removes spaces between Japanese/Chinese/Korean characters while preserving spaces around Latin text
 function cleanCJKSpaces(text) {
   // CJK Unicode ranges: Hiragana, Katakana, Kanji, CJK Unified Ideographs, Fullwidth forms
-  const cjkPattern = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\u4e00-\u9faf\uff00-\uffef]/;
+  const cjkPattern =
+    /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\u4e00-\u9faf\uff00-\uffef]/;
 
   // Remove spaces between two CJK characters
   return text.replace(/(\S)\s+(?=\S)/g, (match, char1) => {
     // Get the character after the space(s)
-    const nextCharMatch = text.match(new RegExp(char1 + '\\s+(.)', 'g'));
+    const nextCharMatch = text.match(new RegExp(char1 + "\\s+(.)", "g"));
     if (nextCharMatch && nextCharMatch.length > 0) {
       const char2 = nextCharMatch[0].slice(-1);
       // If both characters are CJK, remove the space
@@ -96,10 +112,23 @@ function cleanCJKSpaces(text) {
 // Console logging functionality
 function formatTimestamp() {
   const now = new Date();
-  return now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+  return now.toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+  });
 }
 
-function addConsoleEntry(type, content, data = null, emoji = null, author = null, isAudio = false) {
+function addConsoleEntry(
+  type,
+  content,
+  data = null,
+  emoji = null,
+  author = null,
+  isAudio = false,
+) {
   // Skip audio events if checkbox is unchecked
   if (isAudio && !showAudioEventsCheckbox.checked) {
     return;
@@ -129,7 +158,12 @@ function addConsoleEntry(type, content, data = null, emoji = null, author = null
 
   const typeLabel = document.createElement("span");
   typeLabel.className = "console-entry-type";
-  typeLabel.textContent = type === 'outgoing' ? '↑ Upstream' : type === 'incoming' ? '↓ Downstream' : '⚠ Error';
+  typeLabel.textContent =
+    type === "outgoing"
+      ? "↑ Upstream"
+      : type === "incoming"
+        ? "↓ Downstream"
+        : "⚠ Error";
 
   leftSection.appendChild(expandIcon);
   leftSection.appendChild(typeLabel);
@@ -139,7 +173,7 @@ function addConsoleEntry(type, content, data = null, emoji = null, author = null
     const authorBadge = document.createElement("span");
     authorBadge.className = "console-entry-author";
     authorBadge.textContent = author;
-    authorBadge.setAttribute('data-author', author);
+    authorBadge.setAttribute("data-author", author);
     leftSection.appendChild(authorBadge);
   }
 
@@ -193,11 +227,11 @@ function addConsoleEntry(type, content, data = null, emoji = null, author = null
 }
 
 function clearConsole() {
-  consoleContent.innerHTML = '';
+  consoleContent.innerHTML = "";
 }
 
 // Clear console button handler
-clearConsoleBtn.addEventListener('click', clearConsole);
+clearConsoleBtn.addEventListener("click", clearConsole);
 
 // Update connection status UI
 function updateConnectionStatus(connected) {
@@ -295,7 +329,7 @@ function sanitizeEventForDisplay(event) {
 
   // Check for audio data in content.parts
   if (sanitized.content && sanitized.content.parts) {
-    sanitized.content.parts = sanitized.content.parts.map(part => {
+    sanitized.content.parts = sanitized.content.parts.map((part) => {
       if (part.inlineData && part.inlineData.data) {
         // Calculate byte size (base64 string length / 4 * 3, roughly)
         const byteSize = Math.floor(part.inlineData.data.length * 0.75);
@@ -303,8 +337,8 @@ function sanitizeEventForDisplay(event) {
           ...part,
           inlineData: {
             ...part.inlineData,
-            data: `(${byteSize.toLocaleString()} bytes)`
-          }
+            data: `(${byteSize.toLocaleString()} bytes)`,
+          },
         };
       }
       return part;
@@ -327,11 +361,17 @@ function connectWebsocket() {
     addSystemMessage("Connected to ADK streaming server");
 
     // Log to console
-    addConsoleEntry('incoming', 'WebSocket Connected', {
-      userId: userId,
-      sessionId: sessionId,
-      url: ws_url
-    }, '🔌', 'system');
+    addConsoleEntry(
+      "incoming",
+      "WebSocket Connected",
+      {
+        userId: userId,
+        sessionId: sessionId,
+        url: ws_url,
+      },
+      "🔌",
+      "system",
+    );
 
     // Enable the Send button
     document.getElementById("sendButton").disabled = false;
@@ -345,32 +385,34 @@ function connectWebsocket() {
     console.log("[AGENT TO CLIENT] ", adkEvent);
 
     // Log to console panel
-    let eventSummary = 'Event';
-    let eventEmoji = '📨'; // Default emoji
-    const author = adkEvent.author || 'system';
+    let eventSummary = "Event";
+    let eventEmoji = "📨"; // Default emoji
+    const author = adkEvent.author || "system";
 
     if (adkEvent.turnComplete) {
-      eventSummary = 'Turn Complete';
-      eventEmoji = '✅';
+      eventSummary = "Turn Complete";
+      eventEmoji = "✅";
     } else if (adkEvent.interrupted) {
-      eventSummary = 'Interrupted';
-      eventEmoji = '⏸️';
+      eventSummary = "Interrupted";
+      eventEmoji = "⏸️";
     } else if (adkEvent.inputTranscription) {
       // Show transcription text in summary
-      const transcriptionText = adkEvent.inputTranscription.text || '';
-      const truncated = transcriptionText.length > 60
-        ? transcriptionText.substring(0, 60) + '...'
-        : transcriptionText;
+      const transcriptionText = adkEvent.inputTranscription.text || "";
+      const truncated =
+        transcriptionText.length > 60
+          ? transcriptionText.substring(0, 60) + "..."
+          : transcriptionText;
       eventSummary = `Input Transcription: "${truncated}"`;
-      eventEmoji = '📝';
+      eventEmoji = "📝";
     } else if (adkEvent.outputTranscription) {
       // Show transcription text in summary
-      const transcriptionText = adkEvent.outputTranscription.text || '';
-      const truncated = transcriptionText.length > 60
-        ? transcriptionText.substring(0, 60) + '...'
-        : transcriptionText;
+      const transcriptionText = adkEvent.outputTranscription.text || "";
+      const truncated =
+        transcriptionText.length > 60
+          ? transcriptionText.substring(0, 60) + "..."
+          : transcriptionText;
       eventSummary = `Output Transcription: "${truncated}"`;
-      eventEmoji = '📝';
+      eventEmoji = "📝";
     } else if (adkEvent.usageMetadata) {
       // Show token usage information
       const usage = adkEvent.usageMetadata;
@@ -378,86 +420,110 @@ function connectWebsocket() {
       const responseTokens = usage.candidatesTokenCount || 0;
       const totalTokens = usage.totalTokenCount || 0;
       eventSummary = `Token Usage: ${totalTokens.toLocaleString()} total (${promptTokens.toLocaleString()} prompt + ${responseTokens.toLocaleString()} response)`;
-      eventEmoji = '📊';
+      eventEmoji = "📊";
     } else if (adkEvent.content && adkEvent.content.parts) {
-      const hasText = adkEvent.content.parts.some(p => p.text);
-      const hasAudio = adkEvent.content.parts.some(p => p.inlineData);
-      const hasExecutableCode = adkEvent.content.parts.some(p => p.executableCode);
-      const hasCodeExecutionResult = adkEvent.content.parts.some(p => p.codeExecutionResult);
+      const hasText = adkEvent.content.parts.some((p) => p.text);
+      const hasAudio = adkEvent.content.parts.some((p) => p.inlineData);
+      const hasExecutableCode = adkEvent.content.parts.some(
+        (p) => p.executableCode,
+      );
+      const hasCodeExecutionResult = adkEvent.content.parts.some(
+        (p) => p.codeExecutionResult,
+      );
 
       if (hasExecutableCode) {
         // Show executable code
-        const codePart = adkEvent.content.parts.find(p => p.executableCode);
+        const codePart = adkEvent.content.parts.find((p) => p.executableCode);
         if (codePart && codePart.executableCode) {
-          const code = codePart.executableCode.code || '';
-          const language = codePart.executableCode.language || 'unknown';
-          const truncated = code.length > 60
-            ? code.substring(0, 60).replace(/\n/g, ' ') + '...'
-            : code.replace(/\n/g, ' ');
+          const code = codePart.executableCode.code || "";
+          const language = codePart.executableCode.language || "unknown";
+          const truncated =
+            code.length > 60
+              ? code.substring(0, 60).replace(/\n/g, " ") + "..."
+              : code.replace(/\n/g, " ");
           eventSummary = `Executable Code (${language}): ${truncated}`;
-          eventEmoji = '💻';
+          eventEmoji = "💻";
         }
       }
 
       if (hasCodeExecutionResult) {
         // Show code execution result
-        const resultPart = adkEvent.content.parts.find(p => p.codeExecutionResult);
+        const resultPart = adkEvent.content.parts.find(
+          (p) => p.codeExecutionResult,
+        );
         if (resultPart && resultPart.codeExecutionResult) {
-          const outcome = resultPart.codeExecutionResult.outcome || 'UNKNOWN';
-          const output = resultPart.codeExecutionResult.output || '';
-          const truncatedOutput = output.length > 60
-            ? output.substring(0, 60).replace(/\n/g, ' ') + '...'
-            : output.replace(/\n/g, ' ');
+          const outcome = resultPart.codeExecutionResult.outcome || "UNKNOWN";
+          const output = resultPart.codeExecutionResult.output || "";
+          const truncatedOutput =
+            output.length > 60
+              ? output.substring(0, 60).replace(/\n/g, " ") + "..."
+              : output.replace(/\n/g, " ");
           eventSummary = `Code Execution Result (${outcome}): ${truncatedOutput}`;
-          eventEmoji = outcome === 'OUTCOME_OK' ? '✅' : '❌';
+          eventEmoji = outcome === "OUTCOME_OK" ? "✅" : "❌";
         }
       }
 
       if (hasText) {
         // Show text preview in summary
-        const textPart = adkEvent.content.parts.find(p => p.text);
+        const textPart = adkEvent.content.parts.find((p) => p.text);
         if (textPart && textPart.text) {
           const text = textPart.text;
-          const truncated = text.length > 80
-            ? text.substring(0, 80) + '...'
-            : text;
+          const truncated =
+            text.length > 80 ? text.substring(0, 80) + "..." : text;
           eventSummary = `Text: "${truncated}"`;
-          eventEmoji = '💭';
+          eventEmoji = "💭";
         } else {
-          eventSummary = 'Text Response';
-          eventEmoji = '💭';
+          eventSummary = "Text Response";
+          eventEmoji = "💭";
         }
       }
 
       if (hasAudio) {
         // Extract audio info for summary
-        const audioPart = adkEvent.content.parts.find(p => p.inlineData);
+        const audioPart = adkEvent.content.parts.find((p) => p.inlineData);
         if (audioPart && audioPart.inlineData) {
-          const mimeType = audioPart.inlineData.mimeType || 'unknown';
-          const dataLength = audioPart.inlineData.data ? audioPart.inlineData.data.length : 0;
+          const mimeType = audioPart.inlineData.mimeType || "unknown";
+          const dataLength = audioPart.inlineData.data
+            ? audioPart.inlineData.data.length
+            : 0;
           // Base64 string length / 4 * 3 gives approximate bytes
           const byteSize = Math.floor(dataLength * 0.75);
           eventSummary = `Audio Response: ${mimeType} (${byteSize.toLocaleString()} bytes)`;
-          eventEmoji = '🔊';
+          eventEmoji = "🔊";
         } else {
-          eventSummary = 'Audio Response';
-          eventEmoji = '🔊';
+          eventSummary = "Audio Response";
+          eventEmoji = "🔊";
         }
 
         // Log audio event with isAudio flag (filtered by checkbox)
         const sanitizedEvent = sanitizeEventForDisplay(adkEvent);
-        addConsoleEntry('incoming', eventSummary, sanitizedEvent, eventEmoji, author, true);
+        addConsoleEntry(
+          "incoming",
+          eventSummary,
+          sanitizedEvent,
+          eventEmoji,
+          author,
+          true,
+        );
       }
     }
 
     // Create a sanitized version for console display (replace large audio data with summary)
     // Skip if already logged as audio event above
-    const isAudioOnlyEvent = adkEvent.content && adkEvent.content.parts &&
-      adkEvent.content.parts.some(p => p.inlineData) &&
-      !adkEvent.content.parts.some(p => p.text);
+    const isAudioOnlyEvent =
+      adkEvent.content &&
+      adkEvent.content.parts &&
+      adkEvent.content.parts.some((p) => p.inlineData) &&
+      !adkEvent.content.parts.some((p) => p.text);
     if (!isAudioOnlyEvent) {
       const sanitizedEvent = sanitizeEventForDisplay(adkEvent);
-      addConsoleEntry('incoming', eventSummary, sanitizedEvent, eventEmoji, author);
+      addConsoleEntry(
+        "incoming",
+        eventSummary,
+        sanitizedEvent,
+        eventEmoji,
+        author,
+      );
     }
 
     // Handle turn complete event
@@ -472,7 +538,8 @@ function connectWebsocket() {
       }
       // Remove typing indicator from current output transcription
       if (currentOutputTranscriptionElement) {
-        const textElement = currentOutputTranscriptionElement.querySelector(".bubble-text");
+        const textElement =
+          currentOutputTranscriptionElement.querySelector(".bubble-text");
         const typingIndicator = textElement.querySelector(".typing-indicator");
         if (typingIndicator) {
           typingIndicator.remove();
@@ -510,7 +577,8 @@ function connectWebsocket() {
 
       // Keep the partial output transcription but mark it as interrupted
       if (currentOutputTranscriptionElement) {
-        const textElement = currentOutputTranscriptionElement.querySelector(".bubble-text");
+        const textElement =
+          currentOutputTranscriptionElement.querySelector(".bubble-text");
 
         // Remove typing indicator
         const typingIndicator = textElement.querySelector(".typing-indicator");
@@ -548,7 +616,11 @@ function connectWebsocket() {
           currentInputTranscriptionId = Math.random().toString(36).substring(7);
           // Clean spaces between CJK characters
           const cleanedText = cleanCJKSpaces(transcriptionText);
-          currentInputTranscriptionElement = createMessageBubble(cleanedText, true, !isFinished);
+          currentInputTranscriptionElement = createMessageBubble(
+            cleanedText,
+            true,
+            !isFinished,
+          );
           currentInputTranscriptionElement.id = currentInputTranscriptionId;
 
           // Add a special class to indicate it's a transcription
@@ -558,19 +630,35 @@ function connectWebsocket() {
         } else {
           // Update existing transcription bubble only if model hasn't started responding
           // This prevents late partial transcriptions from overwriting complete ones
-          if (currentOutputTranscriptionId == null && currentMessageId == null) {
+          if (
+            currentOutputTranscriptionId == null &&
+            currentMessageId == null
+          ) {
             if (isFinished) {
               // Final transcription contains the complete text, replace entirely
               const cleanedText = cleanCJKSpaces(transcriptionText);
-              updateMessageBubble(currentInputTranscriptionElement, cleanedText, false);
+              updateMessageBubble(
+                currentInputTranscriptionElement,
+                cleanedText,
+                false,
+              );
             } else {
               // Partial transcription - append to existing text
-              const existingText = currentInputTranscriptionElement.querySelector(".bubble-text").textContent;
+              const existingText =
+                currentInputTranscriptionElement.querySelector(
+                  ".bubble-text",
+                ).textContent;
               // Remove typing indicator if present
-              const cleanText = existingText.replace(/\.\.\.$/, '');
+              const cleanText = existingText.replace(/\.\.\.$/, "");
               // Clean spaces between CJK characters before updating
-              const accumulatedText = cleanCJKSpaces(cleanText + transcriptionText);
-              updateMessageBubble(currentInputTranscriptionElement, accumulatedText, true);
+              const accumulatedText = cleanCJKSpaces(
+                cleanText + transcriptionText,
+              );
+              updateMessageBubble(
+                currentInputTranscriptionElement,
+                accumulatedText,
+                true,
+              );
             }
           }
         }
@@ -594,10 +682,15 @@ function connectWebsocket() {
 
       if (transcriptionText) {
         // Finalize any active input transcription when server starts responding
-        if (currentInputTranscriptionId != null && currentOutputTranscriptionId == null) {
+        if (
+          currentInputTranscriptionId != null &&
+          currentOutputTranscriptionId == null
+        ) {
           // This is the first output transcription - finalize input transcription
-          const textElement = currentInputTranscriptionElement.querySelector(".bubble-text");
-          const typingIndicator = textElement.querySelector(".typing-indicator");
+          const textElement =
+            currentInputTranscriptionElement.querySelector(".bubble-text");
+          const typingIndicator =
+            textElement.querySelector(".typing-indicator");
           if (typingIndicator) {
             typingIndicator.remove();
           }
@@ -609,8 +702,14 @@ function connectWebsocket() {
 
         if (currentOutputTranscriptionId == null) {
           // Create new transcription bubble for agent
-          currentOutputTranscriptionId = Math.random().toString(36).substring(7);
-          currentOutputTranscriptionElement = createMessageBubble(transcriptionText, false, !isFinished);
+          currentOutputTranscriptionId = Math.random()
+            .toString(36)
+            .substring(7);
+          currentOutputTranscriptionElement = createMessageBubble(
+            transcriptionText,
+            false,
+            !isFinished,
+          );
           currentOutputTranscriptionElement.id = currentOutputTranscriptionId;
 
           // Add a special class to indicate it's a transcription
@@ -621,13 +720,24 @@ function connectWebsocket() {
           // Update existing transcription bubble
           if (isFinished) {
             // Final transcription contains the complete text, replace entirely
-            updateMessageBubble(currentOutputTranscriptionElement, transcriptionText, false);
+            updateMessageBubble(
+              currentOutputTranscriptionElement,
+              transcriptionText,
+              false,
+            );
           } else {
             // Partial transcription - append to existing text
-            const existingText = currentOutputTranscriptionElement.querySelector(".bubble-text").textContent;
+            const existingText =
+              currentOutputTranscriptionElement.querySelector(
+                ".bubble-text",
+              ).textContent;
             // Remove typing indicator if present
-            const cleanText = existingText.replace(/\.\.\.$/, '');
-            updateMessageBubble(currentOutputTranscriptionElement, cleanText + transcriptionText, true);
+            const cleanText = existingText.replace(/\.\.\.$/, "");
+            updateMessageBubble(
+              currentOutputTranscriptionElement,
+              cleanText + transcriptionText,
+              true,
+            );
           }
         }
 
@@ -646,9 +756,14 @@ function connectWebsocket() {
       const parts = adkEvent.content.parts;
 
       // Finalize any active input transcription when server starts responding with content
-      if (currentInputTranscriptionId != null && currentMessageId == null && currentOutputTranscriptionId == null) {
+      if (
+        currentInputTranscriptionId != null &&
+        currentMessageId == null &&
+        currentOutputTranscriptionId == null
+      ) {
         // This is the first content event - finalize input transcription
-        const textElement = currentInputTranscriptionElement.querySelector(".bubble-text");
+        const textElement =
+          currentInputTranscriptionElement.querySelector(".bubble-text");
         const typingIndicator = textElement.querySelector(".typing-indicator");
         if (typingIndicator) {
           typingIndicator.remove();
@@ -691,10 +806,15 @@ function connectWebsocket() {
             messagesDiv.appendChild(currentBubbleElement);
           } else {
             // Update the existing message bubble with accumulated text
-            const existingText = currentBubbleElement.querySelector(".bubble-text").textContent;
+            const existingText =
+              currentBubbleElement.querySelector(".bubble-text").textContent;
             // Remove the "..." if present
-            const cleanText = existingText.replace(/\.\.\.$/, '');
-            updateMessageBubble(currentBubbleElement, cleanText + part.text, true);
+            const cleanText = existingText.replace(/\.\.\.$/, "");
+            updateMessageBubble(
+              currentBubbleElement,
+              cleanText + part.text,
+              true,
+            );
           }
 
           // Scroll down to the bottom of the messagesDiv
@@ -712,20 +832,32 @@ function connectWebsocket() {
     addSystemMessage("Connection closed. Reconnecting in 5 seconds...");
 
     // Log to console
-    addConsoleEntry('error', 'WebSocket Disconnected', {
-      status: 'Connection closed',
-      reconnecting: true,
-      reconnectDelay: '5 seconds'
-    }, '🔌', 'system');
+    addConsoleEntry(
+      "error",
+      "WebSocket Disconnected",
+      {
+        status: "Connection closed",
+        reconnecting: true,
+        reconnectDelay: "5 seconds",
+      },
+      "🔌",
+      "system",
+    );
 
     setTimeout(function () {
       console.log("Reconnecting...");
 
       // Log reconnection attempt to console
-      addConsoleEntry('outgoing', 'Reconnecting to ADK server...', {
-        userId: userId,
-        sessionId: sessionId
-      }, '🔄', 'system');
+      addConsoleEntry(
+        "outgoing",
+        "Reconnecting to ADK server...",
+        {
+          userId: userId,
+          sessionId: sessionId,
+        },
+        "🔄",
+        "system",
+      );
 
       connectWebsocket();
     }, 5000);
@@ -736,10 +868,16 @@ function connectWebsocket() {
     updateConnectionStatus(false);
 
     // Log to console
-    addConsoleEntry('error', 'WebSocket Error', {
-      error: e.type,
-      message: 'Connection error occurred'
-    }, '⚠️', 'system');
+    addConsoleEntry(
+      "error",
+      "WebSocket Error",
+      {
+        error: e.type,
+        message: "Connection error occurred",
+      },
+      "⚠️",
+      "system",
+    );
   };
 }
 connectWebsocket();
@@ -771,12 +909,12 @@ function sendMessage(message) {
   if (websocket && websocket.readyState == WebSocket.OPEN) {
     const jsonMessage = JSON.stringify({
       type: "text",
-      text: message
+      text: message,
     });
     websocket.send(jsonMessage);
 
     // Log to console panel
-    addConsoleEntry('outgoing', 'User Message: ' + message, null, '💬', 'user');
+    addConsoleEntry("outgoing", "User Message: " + message, null, "💬", "user");
   }
 }
 
@@ -785,11 +923,11 @@ function sendMessage(message) {
 function base64ToArray(base64) {
   // Convert base64url to standard base64
   // Replace URL-safe characters: - with +, _ with /
-  let standardBase64 = base64.replace(/-/g, '+').replace(/_/g, '/');
+  let standardBase64 = base64.replace(/-/g, "+").replace(/_/g, "/");
 
   // Add padding if needed
   while (standardBase64.length % 4) {
-    standardBase64 += '=';
+    standardBase64 += "=";
   }
 
   const binaryString = window.atob(standardBase64);
@@ -802,146 +940,232 @@ function base64ToArray(base64) {
 }
 
 /**
- * Camera handling
+ * Session handling (camera + audio + VAD)
  */
 
-const cameraButton = document.getElementById("cameraButton");
-const cameraModal = document.getElementById("cameraModal");
-const cameraPreview = document.getElementById("cameraPreview");
-const closeCameraModal = document.getElementById("closeCameraModal");
-const cancelCamera = document.getElementById("cancelCamera");
-const captureImageBtn = document.getElementById("captureImage");
-
 let cameraStream = null;
+let isSpeaking = false;
+let imageStreamInterval = null;
+let myVad = null;
 
-// Open camera modal and start preview
-async function openCameraPreview() {
+const startSessionButton = document.getElementById("startSessionButton");
+const cameraPreviewOverlay = document.getElementById("cameraPreviewOverlay");
+const cameraPreviewLive = document.getElementById("cameraPreviewLive");
+const vadIndicator = document.getElementById("vadIndicator");
+
+// Capture a camera frame and send it to the server (silently — no chat bubble)
+function captureAndSendSnapshot() {
+  if (!cameraStream || !websocket || websocket.readyState !== WebSocket.OPEN) {
+    return;
+  }
   try {
-    // Request access to the user's webcam
+    const video = cameraPreviewLive;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+    const canvas = document.createElement("canvas");
+    // Resize to 768 max dimension while keeping aspect ratio
+    const scale = Math.min(768 / video.videoWidth, 768 / video.videoHeight, 1);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64data = reader.result.split(",")[1];
+          const jsonMessage = JSON.stringify({
+            type: "image",
+            data: base64data,
+            mimeType: "image/jpeg",
+          });
+          websocket.send(jsonMessage);
+
+          // Log to console only (not chat)
+          addConsoleEntry(
+            "outgoing",
+            `Snapshot: ${blob.size} bytes (${canvas.width}x${canvas.height})`,
+            {
+              size: blob.size,
+              type: "image/jpeg",
+              dimensions: `${canvas.width}x${canvas.height}`,
+            },
+            "📷",
+            "user",
+          );
+        };
+        reader.readAsDataURL(blob);
+      },
+      "image/jpeg",
+      0.7,
+    );
+  } catch (err) {
+    console.error("Snapshot capture error:", err);
+  }
+}
+
+// Called by VAD when speech starts
+function handleSpeechStart() {
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+  isSpeaking = true;
+
+  // Send activity_start before any audio
+  websocket.send(JSON.stringify({ type: "activity_start" }));
+
+  // Visual feedback
+  vadIndicator.classList.add("active");
+  cameraPreviewOverlay.classList.add("speaking");
+
+  // Capture first snapshot immediately
+  captureAndSendSnapshot();
+
+  // Start periodic image streaming every 1000ms
+  imageStreamInterval = setInterval(captureAndSendSnapshot, 1000);
+
+  addConsoleEntry(
+    "outgoing",
+    "Speech start → activity_start",
+    null,
+    "🎙️",
+    "user",
+  );
+  console.log("[VAD] Speech start — activity_start sent");
+}
+
+// Called by VAD when speech ends
+function handleSpeechEnd(audio) {
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+
+  // Capture final snapshot
+  captureAndSendSnapshot();
+
+  // Stop image streaming
+  if (imageStreamInterval) {
+    clearInterval(imageStreamInterval);
+    imageStreamInterval = null;
+  }
+
+  isSpeaking = false;
+
+  // Send activity_end after last audio
+  websocket.send(JSON.stringify({ type: "activity_end" }));
+
+  // Visual feedback
+  vadIndicator.classList.remove("active");
+  cameraPreviewOverlay.classList.remove("speaking");
+
+  addConsoleEntry("outgoing", "Speech end → activity_end", null, "🎙️", "user");
+  console.log("[VAD] Speech end — activity_end sent");
+}
+
+// Start session: request mic + camera, init audio worklets, init VAD
+async function startSession() {
+  startSessionButton.disabled = true;
+  startSessionButton.textContent = "Starting...";
+
+  try {
+    // 1. Request camera access
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
         width: { ideal: 768 },
         height: { ideal: 768 },
-        facingMode: 'user'
-      }
+        facingMode: "user",
+      },
     });
+    cameraPreviewLive.srcObject = cameraStream;
+    cameraPreviewOverlay.classList.remove("hidden");
 
-    // Set the stream to the video element
-    cameraPreview.srcObject = cameraStream;
+    // 2. Start audio player worklet (for playback)
+    const [pNode, pCtx] = await startAudioPlayerWorklet();
+    audioPlayerNode = pNode;
+    audioPlayerContext = pCtx;
 
-    // Show the modal
-    cameraModal.classList.add('show');
+    // 3. Start audio recorder worklet (for PCM capture → streaming)
+    const [rNode, rCtx, stream] =
+      await startAudioRecorderWorklet(audioRecorderHandler);
+    audioRecorderNode = rNode;
+    audioRecorderContext = rCtx;
+    micStream = stream;
 
-  } catch (error) {
-    console.error('Error accessing camera:', error);
-    addSystemMessage(`Failed to access camera: ${error.message}`);
-
-    // Log to console
-    addConsoleEntry('error', 'Camera access failed', {
-      error: error.message,
-      name: error.name
-    }, '⚠️', 'system');
-  }
-}
-
-// Close camera modal and stop preview
-function closeCameraPreview() {
-  // Stop the camera stream
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-    cameraStream = null;
-  }
-
-  // Clear the video source
-  cameraPreview.srcObject = null;
-
-  // Hide the modal
-  cameraModal.classList.remove('show');
-}
-
-// Capture image from the live preview
-function captureImageFromPreview() {
-  if (!cameraStream) {
-    addSystemMessage('No camera stream available');
-    return;
-  }
-
-  try {
-    // Create canvas to capture the frame
-    const canvas = document.createElement('canvas');
-    canvas.width = cameraPreview.videoWidth;
-    canvas.height = cameraPreview.videoHeight;
-    const context = canvas.getContext('2d');
-
-    // Draw current video frame to canvas
-    context.drawImage(cameraPreview, 0, 0, canvas.width, canvas.height);
-
-    // Convert canvas to data URL for display
-    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.85);
-
-    // Display the captured image in the chat
-    const imageBubble = createImageBubble(imageDataUrl, true);
-    messagesDiv.appendChild(imageBubble);
-    scrollToBottom();
-
-    // Convert canvas to blob for sending to server
-    canvas.toBlob((blob) => {
-      // Convert blob to base64 for sending to server
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64data = reader.result.split(',')[1]; // Remove data:image/jpeg;base64, prefix
-        sendImage(base64data);
-      };
-      reader.readAsDataURL(blob);
-
-      // Log to console
-      addConsoleEntry('outgoing', `Image captured: ${blob.size} bytes (JPEG)`, {
-        size: blob.size,
-        type: 'image/jpeg',
-        dimensions: `${canvas.width}x${canvas.height}`
-      }, '📷', 'user');
-    }, 'image/jpeg', 0.85);
-
-    // Close the camera modal
-    closeCameraPreview();
-
-  } catch (error) {
-    console.error('Error capturing image:', error);
-    addSystemMessage(`Failed to capture image: ${error.message}`);
-
-    // Log to console
-    addConsoleEntry('error', 'Image capture failed', {
-      error: error.message,
-      name: error.name
-    }, '⚠️', 'system');
-  }
-}
-
-// Send image to server
-function sendImage(base64Image) {
-  if (websocket && websocket.readyState === WebSocket.OPEN) {
-    const jsonMessage = JSON.stringify({
-      type: "image",
-      data: base64Image,
-      mimeType: "image/jpeg"
+    // 4. Initialize client-side VAD with strict thresholds to avoid false positives
+    myVad = await vad.MicVAD.new({
+      onSpeechStart: () => {
+        handleSpeechStart();
+      },
+      onSpeechEnd: (audio) => {
+        handleSpeechEnd(audio);
+      },
+      // Higher = requires stronger speech probability to trigger (default 0.5)
+      positiveSpeechThreshold: 0.9,
+      // Lower = ends speech faster when voice drops (default 0.35)
+      negativeSpeechThreshold: 0.75,
+      // Require more consecutive speech frames before triggering start (default 1)
+      minSpeechFrames: 5,
+      // Number of negative frames needed before ending speech (default 8)
+      redemptionFrames: 12,
+      // Pre-speech padding in frames to include audio before detection
+      preSpeechPadFrames: 3,
+      onnxWASMBasePath:
+        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/",
+      baseAssetPath:
+        "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/",
     });
-    websocket.send(jsonMessage);
-    console.log("[CLIENT TO AGENT] Sent image");
+    myVad.start();
+
+    // 5. Session is ready
+    is_audio = true;
+    startSessionButton.classList.add("hidden");
+    addSystemMessage("Session started — speak to interact with the agent");
+
+    addConsoleEntry(
+      "outgoing",
+      "Session started (audio + camera + VAD)",
+      {
+        status: "active",
+        camera: true,
+        vad: "client-side (@ricky0123/vad-web)",
+      },
+      "🚀",
+      "system",
+    );
+  } catch (err) {
+    console.error("Failed to start session:", err);
+    startSessionButton.disabled = false;
+    startSessionButton.textContent = "Start Session";
+
+    // Graceful fallback messaging
+    let errorMsg = `Failed to start session: ${err.message}`;
+    if (err.name === "NotAllowedError") {
+      errorMsg =
+        "Camera/microphone permission denied. Please allow access and try again.";
+    } else if (err.name === "NotFoundError") {
+      errorMsg = "No camera or microphone found on this device.";
+    }
+    addSystemMessage(errorMsg);
+
+    addConsoleEntry(
+      "error",
+      "Session start failed",
+      {
+        error: err.message,
+        name: err.name,
+      },
+      "⚠️",
+      "system",
+    );
+
+    // Clean up partial state
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((t) => t.stop());
+      cameraStream = null;
+    }
+    cameraPreviewOverlay.classList.add("hidden");
   }
 }
 
-// Event listeners
-cameraButton.addEventListener("click", openCameraPreview);
-closeCameraModal.addEventListener("click", closeCameraPreview);
-cancelCamera.addEventListener("click", closeCameraPreview);
-captureImageBtn.addEventListener("click", captureImageFromPreview);
-
-// Close modal when clicking outside of it
-cameraModal.addEventListener("click", (event) => {
-  if (event.target === cameraModal) {
-    closeCameraPreview();
-  }
-});
+startSessionButton.addEventListener("click", startSession);
 
 /**
  * Audio handling
@@ -957,48 +1181,18 @@ let micStream;
 import { startAudioPlayerWorklet } from "./audio-player.js";
 import { startAudioRecorderWorklet } from "./audio-recorder.js";
 
-// Start audio
-function startAudio() {
-  // Start audio output
-  startAudioPlayerWorklet().then(([node, ctx]) => {
-    audioPlayerNode = node;
-    audioPlayerContext = ctx;
-  });
-  // Start audio input
-  startAudioRecorderWorklet(audioRecorderHandler).then(
-    ([node, ctx, stream]) => {
-      audioRecorderNode = node;
-      audioRecorderContext = ctx;
-      micStream = stream;
-    }
-  );
-}
-
-// Start the audio only when the user clicked the button
-// (due to the gesture requirement for the Web Audio API)
-const startAudioButton = document.getElementById("startAudioButton");
-startAudioButton.addEventListener("click", () => {
-  startAudioButton.disabled = true;
-  startAudio();
-  is_audio = true;
-  addSystemMessage("Audio mode enabled - you can now speak to the agent");
-
-  // Log to console
-  addConsoleEntry('outgoing', 'Audio Mode Enabled', {
-    status: 'Audio worklets started',
-    message: 'Microphone active - audio input will be sent to agent'
-  }, '🎤', 'system');
-});
-
-// Audio recorder handler
+// Audio recorder handler — only send audio when VAD detects speech
 function audioRecorderHandler(pcmData) {
-  if (websocket && websocket.readyState === WebSocket.OPEN && is_audio) {
-    // Send audio as binary WebSocket frame (more efficient than base64 JSON)
+  if (
+    websocket &&
+    websocket.readyState === WebSocket.OPEN &&
+    is_audio &&
+    isSpeaking
+  ) {
     websocket.send(pcmData);
-    console.log("[CLIENT TO AGENT] Sent audio chunk: %s bytes", pcmData.byteLength);
-
-    // Log to console panel (optional, can be noisy with frequent audio chunks)
-    // addConsoleEntry('outgoing', `Audio chunk: ${pcmData.byteLength} bytes`);
+    console.log(
+      "[CLIENT TO AGENT] Sent audio chunk: %s bytes",
+      pcmData.byteLength,
+    );
   }
 }
-

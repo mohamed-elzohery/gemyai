@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ADK Gemini Live API Toolkit Demo</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <script src="/static/js/app.js" type="module"></script>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.wasm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/bundle.min.js"></script>
+    <script src="/static/js/app.js?v=2" type="module"></script>
   </head>
 
   <body>
@@ -32,6 +34,12 @@
       <div class="container">
         <div id="messages"></div>
 
+        <!-- Floating camera preview (shown after session starts) -->
+        <div id="cameraPreviewOverlay" class="camera-preview-overlay hidden">
+          <video id="cameraPreviewLive" autoplay playsinline muted></video>
+          <div id="vadIndicator" class="vad-indicator"></div>
+        </div>
+
         <div class="input-container">
           <form id="messageForm">
             <div class="input-wrapper">
@@ -43,8 +51,7 @@
                 autocomplete="off"
               />
               <button type="submit" id="sendButton" disabled>Send</button>
-              <button type="button" id="startAudioButton">Start Audio</button>
-              <button type="button" id="cameraButton">📷 Camera</button>
+              <button type="button" id="startSessionButton">Start Session</button>
             </div>
           </form>
         </div>
@@ -62,23 +69,6 @@
           </div>
         </div>
         <div id="consoleContent" class="console-content"></div>
-      </div>
-    </div>
-
-    <!-- Camera Preview Modal -->
-    <div id="cameraModal" class="modal">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h3>Camera Preview</h3>
-          <button id="closeCameraModal" class="close-btn">&times;</button>
-        </div>
-        <div class="modal-body">
-          <video id="cameraPreview" autoplay playsinline></video>
-        </div>
-        <div class="modal-footer">
-          <button id="cancelCamera" class="btn-secondary">Cancel</button>
-          <button id="captureImage" class="btn-primary">📷 Send Image</button>
-        </div>
       </div>
     </div>
   </body>
