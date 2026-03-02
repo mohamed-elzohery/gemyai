@@ -379,9 +379,60 @@ function connectWebsocket() {
   };
 
   // Handle incoming messages
+  let groundingLoadingBubble = null;
   websocket.onmessage = function (event) {
-    // Parse the incoming ADK Event
-    const adkEvent = JSON.parse(event.data);
+    // Parse the incoming message
+    const parsed = JSON.parse(event.data);
+
+    // --- Visual grounding custom messages (not ADK events) ---
+    if (parsed.type === "grounding_status") {
+      // Show a loading bubble for visual grounding
+      const loadingDiv = document.createElement("div");
+      loadingDiv.className = "message agent grounding-loading-message";
+      loadingDiv.innerHTML =
+        '<div class="bubble grounding-loading"><p class="bubble-text">' +
+        "\uD83D\uDD0D " +
+        parsed.message +
+        "</p></div>";
+      messagesDiv.appendChild(loadingDiv);
+      groundingLoadingBubble = loadingDiv;
+      scrollToBottom();
+      // Log to console
+      addConsoleEntry(
+        "incoming",
+        parsed.message,
+        parsed,
+        "\uD83D\uDD0D",
+        "system",
+      );
+      return;
+    }
+
+    if (parsed.type === "grounding_result") {
+      // Remove loading bubble if present
+      if (groundingLoadingBubble) {
+        groundingLoadingBubble.remove();
+        groundingLoadingBubble = null;
+      }
+      // Display the annotated image as an agent bubble
+      const dataUrl =
+        "data:" + (parsed.mimeType || "image/jpeg") + ";base64," + parsed.image;
+      const imageBubble = createImageBubble(dataUrl, false);
+      messagesDiv.appendChild(imageBubble);
+      scrollToBottom();
+      // Log to console
+      addConsoleEntry(
+        "incoming",
+        "Visual grounding result image",
+        { mimeType: parsed.mimeType, imageSize: parsed.image.length },
+        "\uD83D\uDDBC\uFE0F",
+        "system",
+      );
+      return;
+    }
+
+    // --- Normal ADK event handling ---
+    const adkEvent = parsed;
     console.log("[AGENT TO CLIENT] ", adkEvent);
 
     // Log to console panel
@@ -775,13 +826,19 @@ function connectWebsocket() {
       }
 
       for (const part of parts) {
-        // Handle inline data (audio)
+        // Handle inline data (audio or images)
         if (part.inlineData) {
           const mimeType = part.inlineData.mimeType;
           const data = part.inlineData.data;
 
           if (mimeType && mimeType.startsWith("audio/pcm") && audioPlayerNode) {
             audioPlayerNode.port.postMessage(base64ToArray(data));
+          } else if (mimeType && mimeType.startsWith("image/")) {
+            // Display inline image from the model
+            const imgDataUrl = "data:" + mimeType + ";base64," + data;
+            const imgBubble = createImageBubble(imgDataUrl, false);
+            messagesDiv.appendChild(imgBubble);
+            scrollToBottom();
           }
         }
 
@@ -1041,11 +1098,9 @@ function handleSpeechEnd(audio) {
   // Capture final snapshot
   captureAndSendSnapshot();
 
-  // Stop image streaming
-  if (imageStreamInterval) {
-    clearInterval(imageStreamInterval);
-    imageStreamInterval = null;
-  }
+  // Stop image streaming (always clear to guard against stale intervals)
+  clearInterval(imageStreamInterval);
+  imageStreamInterval = null;
 
   isSpeaking = false;
 

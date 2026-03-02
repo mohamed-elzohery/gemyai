@@ -23,13 +23,21 @@ load_dotenv(Path(__file__).parent / ".env")
 # Import agent after loading environment variables
 # pylint: disable=wrong-import-position
 from google_search_agent.agent import agent  # noqa: E402
+from google_search_agent.visual_grounding import (  # noqa: E402
+    get_annotated_image,
+    store_latest_image,
+)
 
-# Configure logging
+# Configure logging — quiet by default, verbose for the annotation flow
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.WARNING,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+# Show annotation-related INFO logs from this module
+logger.setLevel(logging.INFO)
+# Let visual-grounding logs through so we can trace the annotation pipeline
+logging.getLogger("google_search_agent.visual_grounding").setLevel(logging.DEBUG)
 
 # Suppress Pydantic serialization warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
@@ -91,7 +99,6 @@ async def websocket_endpoint(
         f"proactivity={proactivity}, affective_dialog={affective_dialog}"
     )
     await websocket.accept()
-    logger.debug("WebSocket connection accepted")
 
     # ========================================
     # Phase 2: Session Initialization (once per streaming session)
@@ -117,7 +124,6 @@ async def websocket_endpoint(
             response_modalities=response_modalities,
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
-            session_resumption=types.SessionResumptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
                 automatic_activity_detection=types.AutomaticActivityDetection(
                     disabled=True
@@ -128,11 +134,6 @@ async def websocket_endpoint(
             ),
             enable_affective_dialog=affective_dialog if affective_dialog else None,
         )
-        logger.debug(
-            f"Native audio model detected: {model_name}, "
-            f"using AUDIO response modality, "
-            f"proactivity={proactivity}, affective_dialog={affective_dialog}"
-        )
     else:
         # Half-cascade models support TEXT response modality
         # for faster performance
@@ -142,16 +143,11 @@ async def websocket_endpoint(
             response_modalities=response_modalities,
             input_audio_transcription=None,
             output_audio_transcription=None,
-            session_resumption=types.SessionResumptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
                 automatic_activity_detection=types.AutomaticActivityDetection(
                     disabled=True
                 )
             ),
-        )
-        logger.debug(
-            f"Half-cascade model detected: {model_name}, "
-            "using TEXT response modality"
         )
         # Warn if user tried to enable native-audio-only features
         if proactivity or affective_dialog:
@@ -170,7 +166,6 @@ async def websocket_endpoint(
         await session_service.create_session(
             app_name=APP_NAME, user_id=user_id, session_id=session_id
         )
-
     live_request_queue = LiveRequestQueue()
 
     # ========================================
@@ -179,7 +174,6 @@ async def websocket_endpoint(
 
     async def upstream_task() -> None:
         """Receives messages from WebSocket and sends to LiveRequestQueue."""
-        logger.debug("upstream_task started")
         while True:
             # Receive message from WebSocket (text or binary)
             message = await websocket.receive()
@@ -187,8 +181,6 @@ async def websocket_endpoint(
             # Handle binary frames (audio data)
             if "bytes" in message:
                 audio_data = message["bytes"]
-                logger.debug(f"Received binary audio chunk: {len(audio_data)} bytes")
-
                 audio_blob = types.Blob(
                     mime_type="audio/pcm;rate=16000", data=audio_data
                 )
@@ -197,22 +189,17 @@ async def websocket_endpoint(
             # Handle text frames (JSON messages)
             elif "text" in message:
                 text_data = message["text"]
-                logger.debug(f"Received text message: {text_data[:100]}...")
-
                 json_message = json.loads(text_data)
 
                 # Handle activity signals (client-side VAD)
                 if json_message.get("type") == "activity_start":
-                    logger.debug("Received activity_start signal")
                     live_request_queue.send_activity_start()
 
                 elif json_message.get("type") == "activity_end":
-                    logger.debug("Received activity_end signal")
                     live_request_queue.send_activity_end()
 
                 # Extract text from JSON and send to LiveRequestQueue
                 elif json_message.get("type") == "text":
-                    logger.debug(f"Sending text content: {json_message['text']}")
                     content = types.Content(
                         parts=[types.Part(text=json_message["text"])]
                     )
@@ -220,15 +207,12 @@ async def websocket_endpoint(
 
                 # Handle image data
                 elif json_message.get("type") == "image":
-                    logger.debug("Received image data")
-
                     # Decode base64 image data
                     image_data = base64.b64decode(json_message["data"])
                     mime_type = json_message.get("mimeType", "image/jpeg")
 
-                    logger.debug(
-                        f"Sending image: {len(image_data)} bytes, " f"type: {mime_type}"
-                    )
+                    # Cache the latest camera frame for visual grounding
+                    store_latest_image(session_id, image_data)
 
                     # Send image as blob
                     image_blob = types.Blob(mime_type=mime_type, data=image_data)
@@ -236,10 +220,6 @@ async def websocket_endpoint(
 
     async def downstream_task() -> None:
         """Receives Events from run_live() and sends to WebSocket."""
-        logger.debug("downstream_task started, calling runner.run_live()")
-        logger.debug(
-            f"Starting run_live with user_id={user_id}, " f"session_id={session_id}"
-        )
         async for event in runner.run_live(
             user_id=user_id,
             session_id=session_id,
@@ -247,16 +227,71 @@ async def websocket_endpoint(
             run_config=run_config,
         ):
             event_json = event.model_dump_json(exclude_none=True, by_alias=True)
-            logger.debug(f"[SERVER] Event: {event_json}")
-            await websocket.send_text(event_json)
-        logger.debug("run_live() generator completed")
+
+            # --- Visual grounding interception ---
+            # Detect annotate_image function_call / function_response events.
+            # These are internal tool-execution events — we intercept them to
+            # send custom messages and suppress forwarding to the client.
+            skip_event = False
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if (
+                        part.function_call
+                        and part.function_call.name == "annotate_image"
+                    ):
+                        logger.info(
+                            "[Annotation] Detected annotate_image function_call event"
+                        )
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "grounding_status",
+                                    "message": "Pointing to the parts...",
+                                }
+                            )
+                        )
+                        skip_event = True
+                    # Also suppress function_response if it happens to be
+                    # yielded (depends on ADK version / streaming mode).
+                    if (
+                        part.function_response
+                        and part.function_response.name == "annotate_image"
+                    ):
+                        skip_event = True
+
+            if not skip_event:
+                await websocket.send_text(event_json)
+
+    async def image_delivery_task() -> None:
+        """Polls for annotated images and sends them to the client.
+
+        Runs independently of the ADK event stream so the image is
+        delivered as soon as the visual-grounding tool produces it,
+        regardless of whether an ADK event happens to be yielded at
+        the right moment.
+        """
+        while True:
+            await asyncio.sleep(0.3)
+            annotated_b64 = get_annotated_image(session_id)
+            if annotated_b64:
+                logger.info(
+                    "[Annotation] Sending annotated image to client " "(%d chars b64)",
+                    len(annotated_b64),
+                )
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "grounding_result",
+                            "image": annotated_b64,
+                            "mimeType": "image/jpeg",
+                        }
+                    )
+                )
 
     # Run both tasks concurrently
     # Exceptions from either task will propagate and cancel the other task
     try:
-        logger.debug("Starting asyncio.gather for upstream and downstream tasks")
-        await asyncio.gather(upstream_task(), downstream_task())
-        logger.debug("asyncio.gather completed normally")
+        await asyncio.gather(upstream_task(), downstream_task(), image_delivery_task())
     except WebSocketDisconnect:
         logger.debug("Client disconnected normally")
     except Exception as e:
