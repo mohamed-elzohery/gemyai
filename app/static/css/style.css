@@ -282,6 +282,18 @@ h1 {
   font-style: italic;
 }
 
+/* Agent status message styling (sub-agent tool activity) */
+.bubble.agent-status {
+  background-color: rgba(52, 168, 83, 0.08);
+  border: 1px solid rgba(52, 168, 83, 0.25);
+  animation: groundingPulse 1.5s ease-in-out infinite;
+}
+
+.bubble.agent-status .bubble-text {
+  color: #34a853;
+  font-style: italic;
+}
+
 @keyframes groundingPulse {
   0%, 100% {
     opacity: 0.6;

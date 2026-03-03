@@ -380,9 +380,41 @@ function connectWebsocket() {
 
   // Handle incoming messages
   let groundingLoadingBubble = null;
+  let agentStatusBubble = null;
   websocket.onmessage = function (event) {
     // Parse the incoming message
     const parsed = JSON.parse(event.data);
+
+    // --- Agent status messages (sub-agent tool activity) ---
+    if (parsed.type === "agent_status") {
+      // Remove previous status bubble if present
+      if (agentStatusBubble) {
+        agentStatusBubble.remove();
+        agentStatusBubble = null;
+      }
+      const statusDiv = document.createElement("div");
+      statusDiv.className = "message agent agent-status-message";
+      const emoji =
+        {
+          diagnose_problem: "\u{1F50D}",
+          create_fix_plan: "\u{1F4CB}",
+          replan_fix: "\u{1F504}",
+          get_current_step: "\u{1F4CD}",
+          report_step_result: "\u{2705}",
+          annotate_image: "\u{1F3AF}",
+        }[parsed.tool] || "\u{2699}\u{FE0F}";
+      statusDiv.innerHTML =
+        '<div class="bubble agent-status"><p class="bubble-text">' +
+        emoji +
+        " " +
+        parsed.message +
+        "</p></div>";
+      messagesDiv.appendChild(statusDiv);
+      agentStatusBubble = statusDiv;
+      scrollToBottom();
+      addConsoleEntry("incoming", parsed.message, parsed, emoji, "system");
+      return;
+    }
 
     // --- Visual grounding custom messages (not ADK events) ---
     if (parsed.type === "grounding_status") {
@@ -579,6 +611,11 @@ function connectWebsocket() {
 
     // Handle turn complete event
     if (adkEvent.turnComplete === true) {
+      // Remove agent status bubble on turn complete
+      if (agentStatusBubble) {
+        agentStatusBubble.remove();
+        agentStatusBubble = null;
+      }
       // Remove typing indicator from current message
       if (currentBubbleElement) {
         const textElement = currentBubbleElement.querySelector(".bubble-text");
@@ -656,6 +693,19 @@ function connectWebsocket() {
       const transcriptionText = adkEvent.inputTranscription.text;
       const isFinished = adkEvent.inputTranscription.finished;
 
+      // Filter out non-English transcription (Arabic, Chinese, etc.)
+      // by detecting a high ratio of non-Latin characters
+      const nonLatinRe = /[^\u0000-\u007F\u00C0-\u024F\s.,!?'"():\d-]/g;
+      const nonLatinMatches = transcriptionText.match(nonLatinRe);
+      if (
+        nonLatinMatches &&
+        nonLatinMatches.length / transcriptionText.replace(/\s/g, "").length >
+          0.3
+      ) {
+        // Skip this transcription — it's likely misrecognised as another language
+        return;
+      }
+
       if (transcriptionText) {
         // Ignore late-arriving transcriptions after we've finished for this turn
         if (inputTranscriptionFinished) {
@@ -730,6 +780,19 @@ function connectWebsocket() {
       const transcriptionText = adkEvent.outputTranscription.text;
       const isFinished = adkEvent.outputTranscription.finished;
       hasOutputTranscriptionInTurn = true;
+
+      // Filter non-English output transcription
+      const nonLatinOutRe = /[^\u0000-\u007F\u00C0-\u024F\s.,!?'"():\d-]/g;
+      const nonLatinOutMatches = transcriptionText.match(nonLatinOutRe);
+      if (
+        nonLatinOutMatches &&
+        transcriptionText.replace(/\s/g, "").length > 0 &&
+        nonLatinOutMatches.length /
+          transcriptionText.replace(/\s/g, "").length >
+          0.3
+      ) {
+        return; // Skip non-English output transcription
+      }
 
       if (transcriptionText) {
         // Finalize any active input transcription when server starts responding
@@ -1012,7 +1075,12 @@ const vadIndicator = document.getElementById("vadIndicator");
 
 // Capture a camera frame and send it to the server (silently — no chat bubble)
 function captureAndSendSnapshot() {
-  if (!cameraStream || !websocket || websocket.readyState !== WebSocket.OPEN) {
+  if (
+    !cameraStream ||
+    !websocket ||
+    websocket.readyState !== WebSocket.OPEN ||
+    !isSpeaking
+  ) {
     return;
   }
   try {
@@ -1063,9 +1131,24 @@ function captureAndSendSnapshot() {
   }
 }
 
+// Safety timeout — stop image streaming if speech lasts too long (60s)
+let speechSafetyTimeout = null;
+const MAX_SPEECH_DURATION_MS = 60000;
+
 // Called by VAD when speech starts
 function handleSpeechStart() {
   if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+
+  // Clear any stale interval from a previous speech that wasn't properly ended
+  if (imageStreamInterval) {
+    clearInterval(imageStreamInterval);
+    imageStreamInterval = null;
+  }
+  if (speechSafetyTimeout) {
+    clearTimeout(speechSafetyTimeout);
+    speechSafetyTimeout = null;
+  }
+
   isSpeaking = true;
 
   // Send activity_start before any audio
@@ -1081,6 +1164,17 @@ function handleSpeechStart() {
   // Start periodic image streaming every 1000ms
   imageStreamInterval = setInterval(captureAndSendSnapshot, 1000);
 
+  // Safety timeout: auto-stop image streaming after MAX_SPEECH_DURATION_MS
+  speechSafetyTimeout = setTimeout(() => {
+    if (imageStreamInterval) {
+      console.warn(
+        "[VAD] Speech safety timeout reached — stopping image stream",
+      );
+      clearInterval(imageStreamInterval);
+      imageStreamInterval = null;
+    }
+  }, MAX_SPEECH_DURATION_MS);
+
   addConsoleEntry(
     "outgoing",
     "Speech start → activity_start",
@@ -1095,12 +1189,18 @@ function handleSpeechStart() {
 function handleSpeechEnd(audio) {
   if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
 
-  // Capture final snapshot
-  captureAndSendSnapshot();
+  // Stop image streaming FIRST (before setting isSpeaking=false so final snapshot can still fire)
+  if (imageStreamInterval) {
+    clearInterval(imageStreamInterval);
+    imageStreamInterval = null;
+  }
+  if (speechSafetyTimeout) {
+    clearTimeout(speechSafetyTimeout);
+    speechSafetyTimeout = null;
+  }
 
-  // Stop image streaming (always clear to guard against stale intervals)
-  clearInterval(imageStreamInterval);
-  imageStreamInterval = null;
+  // Capture one final snapshot while isSpeaking is still true
+  captureAndSendSnapshot();
 
   isSpeaking = false;
 

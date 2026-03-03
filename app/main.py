@@ -15,6 +15,7 @@ from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from google.adk.artifacts import InMemoryArtifactService
 from google.genai import types
 
 # Load environment variables from .env file BEFORE importing agent
@@ -22,8 +23,8 @@ load_dotenv(Path(__file__).parent / ".env")
 
 # Import agent after loading environment variables
 # pylint: disable=wrong-import-position
-from google_search_agent.agent import agent  # noqa: E402
-from google_search_agent.visual_grounding import (  # noqa: E402
+from field_service_agent.agent import agent  # noqa: E402
+from field_service_agent.visual_grounding import (  # noqa: E402
     get_annotated_image,
     store_latest_image,
 )
@@ -37,13 +38,74 @@ logger = logging.getLogger(__name__)
 # Show annotation-related INFO logs from this module
 logger.setLevel(logging.INFO)
 # Let visual-grounding logs through so we can trace the annotation pipeline
-logging.getLogger("google_search_agent.visual_grounding").setLevel(logging.DEBUG)
+logging.getLogger("field_service_agent.visual_grounding").setLevel(logging.DEBUG)
+# Let sub-agent tool logs through
+logging.getLogger("field_service_agent.tools").setLevel(logging.DEBUG)
 
 # Suppress Pydantic serialization warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 # Application name constant
 APP_NAME = "bidi-demo"
+
+# Internal tool names used by the field-service agent
+_INTERNAL_TOOLS = {
+    "annotate_image",
+    "start_diagnosis",
+    "submit_diagnosis_answer",
+    "create_fix_plan",
+    "replan_fix",
+    "get_current_step",
+    "report_step_result",
+}
+
+_TOOL_STATUS_MESSAGES = {
+    "annotate_image": "Pointing to the parts...",
+    "start_diagnosis": "Starting diagnosis...",
+    "submit_diagnosis_answer": "Processing your answer...",
+    "create_fix_plan": "Creating a repair plan...",
+    "replan_fix": "Adjusting the plan...",
+    "get_current_step": "Loading the next step...",
+    "report_step_result": "Recording step result...",
+}
+
+
+def _is_thinking_text(text: str) -> bool:
+    """Return True if *text* looks like internal model reasoning/planning.
+
+    These leaked chain-of-thought fragments should be suppressed so the
+    user only sees natural conversational responses.
+    """
+    if not text or not text.strip():
+        return False
+    stripped = text.strip()
+    # Bold-markdown headers (e.g. "**Acknowledging New Method**")
+    if stripped.startswith("**") and "**" in stripped[2:]:
+        return True
+    # References to internal tool names in planning context
+    for tool_name in _INTERNAL_TOOLS:
+        if tool_name in text:
+            return True
+    # Common reasoning phrases that should not be shown to user
+    _REASONING_MARKERS = [
+        "my next step is",
+        "i'm going to call",
+        "i will now call",
+        "i'll call the",
+        "i need to call",
+        "let me call",
+        "i'm ready to",
+        "following this,",
+        "i've acknowledged",
+        "i should now",
+        "the next action is",
+    ]
+    lower = text.lower()
+    for marker in _REASONING_MARKERS:
+        if marker in lower:
+            return True
+    return False
+
 
 # ========================================
 # Phase 1: Application Initialization (once at startup)
@@ -55,11 +117,17 @@ app = FastAPI()
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-# Define your session service
+# Define your session and artifact services
 session_service = InMemorySessionService()
+artifact_service = InMemoryArtifactService()
 
 # Define your runner
-runner = Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
+runner = Runner(
+    app_name=APP_NAME,
+    agent=agent,
+    session_service=session_service,
+    artifact_service=artifact_service,
+)
 
 # ========================================
 # HTTP Endpoints
@@ -129,6 +197,11 @@ async def websocket_endpoint(
                     disabled=True
                 )
             ),
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
+                ),
+            ),
             proactivity=(
                 types.ProactivityConfig(proactive_audio=True) if proactivity else None
             ),
@@ -163,8 +236,18 @@ async def websocket_endpoint(
         app_name=APP_NAME, user_id=user_id, session_id=session_id
     )
     if not session:
-        await session_service.create_session(
-            app_name=APP_NAME, user_id=user_id, session_id=session_id
+        session = await session_service.create_session(
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=session_id,
+            state={
+                "phase": "intake",
+                "problem_image_count": 0,
+                "step_results": "{}",
+                "diagnosis_history": "[]",
+                "diagnosis_status": "not_started",
+                "current_diagnosis_question": "",
+            },
         )
     live_request_queue = LiveRequestQueue()
 
@@ -228,35 +311,73 @@ async def websocket_endpoint(
         ):
             event_json = event.model_dump_json(exclude_none=True, by_alias=True)
 
-            # --- Visual grounding interception ---
-            # Detect annotate_image function_call / function_response events.
-            # These are internal tool-execution events — we intercept them to
-            # send custom messages and suppress forwarding to the client.
             skip_event = False
             if event.content and event.content.parts:
                 for part in event.content.parts:
+                    # --- 1. Intercept function_call events for internal tools ---
                     if (
                         part.function_call
-                        and part.function_call.name == "annotate_image"
+                        and part.function_call.name in _INTERNAL_TOOLS
                     ):
+                        tool_name = part.function_call.name
                         logger.info(
-                            "[Annotation] Detected annotate_image function_call event"
+                            "[Tools] Detected %s function_call event", tool_name
+                        )
+                        status_msg = _TOOL_STATUS_MESSAGES.get(
+                            tool_name, "Working on it..."
                         )
                         await websocket.send_text(
                             json.dumps(
                                 {
-                                    "type": "grounding_status",
-                                    "message": "Pointing to the parts...",
+                                    "type": "agent_status",
+                                    "tool": tool_name,
+                                    "message": status_msg,
                                 }
                             )
                         )
                         skip_event = True
-                    # Also suppress function_response if it happens to be
-                    # yielded (depends on ADK version / streaming mode).
+
+                    # --- 2. Intercept function_response events ---
                     if (
                         part.function_response
-                        and part.function_response.name == "annotate_image"
+                        and part.function_response.name in _INTERNAL_TOOLS
                     ):
+                        skip_event = True
+                        # Deliver annotated image immediately on annotate_image response
+                        if part.function_response.name == "annotate_image":
+                            annotated_b64 = get_annotated_image(session_id)
+                            if annotated_b64:
+                                logger.info(
+                                    "[Annotation] Delivering annotated image "
+                                    "via downstream (sync, %d chars b64)",
+                                    len(annotated_b64),
+                                )
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "type": "grounding_result",
+                                            "image": annotated_b64,
+                                            "mimeType": "image/jpeg",
+                                        }
+                                    )
+                                )
+                            else:
+                                logger.warning(
+                                    "[Annotation] annotate_image response received "
+                                    "but no annotated image found for session %s",
+                                    session_id,
+                                )
+
+                    # --- 3. Filter thinking / reasoning text ---
+                    if part.text and _is_thinking_text(part.text):
+                        logger.info(
+                            "[Filter] Suppressed thinking text: %s",
+                            part.text[:120],
+                        )
+                        skip_event = True
+
+                    # --- 4. Filter thought-tagged parts (belt-and-suspenders) ---
+                    if hasattr(part, "thought") and part.thought:
                         skip_event = True
 
             if not skip_event:
