@@ -67,7 +67,7 @@ async def replan_fix(
         tool_context: Injected by ADK — provides session state.
     """
     state = tool_context.session.state
-    session_id = tool_context.session.id
+    session_id = state.get("ws_session_id", tool_context.session.id)
     logger.info("[Replanner] Called: session=%s", session_id)
 
     fix_plan_json = state.get("fix_plan", "")

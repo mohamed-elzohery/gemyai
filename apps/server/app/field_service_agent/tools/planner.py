@@ -65,15 +65,41 @@ async def create_fix_plan(
         tool_context: Injected by ADK — provides session state.
     """
     state = tool_context.session.state
-    session_id = tool_context.session.id
+    session_id = state.get("ws_session_id", tool_context.session.id)
     logger.info("[Planner] Called: session=%s", session_id)
 
     diagnosis_json = state.get("diagnosis_report", "")
     if not diagnosis_json:
-        return {
-            "status": "error",
-            "description": ("No diagnosis report found. Run diagnose_problem first."),
-        }
+        # The coordinating agent may call create_fix_plan before the
+        # diagnoser formally completes.  Fall back to the conversation
+        # history so planning can still proceed.
+        history_json = state.get("diagnosis_history", "[]")
+        try:
+            history = json.loads(history_json) if history_json else []
+        except json.JSONDecodeError:
+            history = []
+        if history:
+            lines = []
+            for entry in history:
+                role = "Technician" if entry["role"] == "user" else "Diagnostic Agent"
+                lines.append(f"{role}: {entry['content']}")
+            diagnosis_json = (
+                "Diagnosis conversation (not formally completed but "
+                "sufficient context is available):\n" + "\n".join(lines)
+            )
+            logger.info(
+                "[Planner] No formal diagnosis_report — using "
+                "diagnosis_history (%d entries) as fallback",
+                len(history),
+            )
+        else:
+            return {
+                "status": "error",
+                "description": (
+                    "No diagnosis report or history found. "
+                    "Run start_diagnosis first."
+                ),
+            }
 
     prompt = (
         f"Diagnosis report:\n{diagnosis_json}\n\n"
