@@ -172,7 +172,9 @@ async def annotate_image(query: str, tool_context: ToolContext) -> dict[str, str
         query: What to find in the image (e.g. "the USB-C slot").
         tool_context: Injected by ADK — provides session info.
     """
-    session_id = tool_context.session.id
+    # Use the WebSocket session ID stored in state (the ADK runner may
+    # assign a different internal session ID).
+    session_id = tool_context.state.get("ws_session_id", tool_context.session.id)
     logger.info(
         "[Annotation] annotate_image called: query=%r, session=%s", query, session_id
     )

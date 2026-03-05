@@ -113,9 +113,8 @@ def _is_thinking_text(text: str) -> bool:
 
 app = FastAPI()
 
-# Mount static files
+# Static directory – populated by the Vite build (apps/client → apps/server/app/static)
 static_dir = Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # Define your session and artifact services
 session_service = InMemorySessionService()
@@ -133,11 +132,23 @@ runner = Runner(
 # HTTP Endpoints
 # ========================================
 
+_index_html = static_dir / "index.html"
+
 
 @app.get("/")
 async def root():
-    """Serve the index.html page."""
-    return FileResponse(Path(__file__).parent / "static" / "index.html")
+    """Serve the SPA index.html page."""
+    return FileResponse(_index_html)
+
+
+# ---- SPA catch-all (registered AFTER /ws below) ----
+# We define it as a plain function and register it after the WebSocket route
+# so that /ws takes priority.
+async def _spa_fallback(full_path: str):
+    """Return index.html for any path not matched by /ws or /static."""
+    if _index_html.exists():
+        return FileResponse(_index_html)
+    return FileResponse(static_dir / "index.html")
 
 
 # ========================================
@@ -247,8 +258,12 @@ async def websocket_endpoint(
                 "diagnosis_history": "[]",
                 "diagnosis_status": "not_started",
                 "current_diagnosis_question": "",
+                "ws_session_id": session_id,
             },
         )
+    else:
+        # Ensure ws_session_id is set for reconnections
+        session.state["ws_session_id"] = session_id
     live_request_queue = LiveRequestQueue()
 
     # ========================================
@@ -425,3 +440,14 @@ async def websocket_endpoint(
         # Always close the queue, even if exceptions occurred
         logger.debug("Closing live_request_queue")
         live_request_queue.close()
+
+
+# ========================================
+# Static files & SPA fallback (registered AFTER /ws so WebSocket takes priority)
+# ========================================
+
+# Mount Vite build output as /static (JS/CSS/assets)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# SPA catch-all: serve index.html for any unmatched GET path
+app.add_api_route("/{full_path:path}", _spa_fallback, methods=["GET"])

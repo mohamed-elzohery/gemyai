@@ -7,7 +7,7 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
     super();
 
     // Init buffer
-    this.bufferSize = 24000 * 180;  // 24kHz x 180 seconds
+    this.bufferSize = 24000 * 180; // 24kHz x 180 seconds
     this.buffer = new Float32Array(this.bufferSize);
     this.writeIndex = 0;
     this.readIndex = 0;
@@ -15,7 +15,7 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
     // Handle incoming messages from main thread
     this.port.onmessage = (event) => {
       // Reset the buffer when 'endOfAudio' message received
-      if (event.data.command === 'endOfAudio') {
+      if (event.data.command === "endOfAudio") {
         this.readIndex = this.writeIndex; // Clear the buffer
         console.log("endOfAudio received, clearing the buffer.");
         return;
@@ -49,12 +49,10 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
   // The system calls `process()` ~128 samples at a time (depending on the browser).
   // We fill the output buffers from our ring buffer.
   process(inputs, outputs, parameters) {
-
     // Write a frame to the output
     const output = outputs[0];
     const framesPerBlock = output[0].length;
     for (let frame = 0; frame < framesPerBlock; frame++) {
-
       // Write the sample(s) into the output buffer
       output[0][frame] = this.buffer[this.readIndex]; // left channel
       if (output.length > 1) {
@@ -72,5 +70,4 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('pcm-player-processor', PCMPlayerProcessor);
-
+registerProcessor("pcm-player-processor", PCMPlayerProcessor);

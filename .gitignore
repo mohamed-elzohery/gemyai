@@ -16,6 +16,7 @@ pip-wheel-metadata/
 # Virtual environments and env files
 .env
 .env.*
+!.env.example
 venv/
 env/
 .venv/
@@ -45,20 +46,29 @@ coverage.xml
 # macOS
 .DS_Store
 
-# Node/npm
+# Node / pnpm
 node_modules/
+.pnpm-store/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+
+# Turborepo
+.turbo/
+
+# Vite build output (client builds into server static dir)
+apps/server/app/static/*
+!apps/server/app/static/.gitkeep
+
+# Vite cache
+apps/client/dist/
+
+# TypeScript
+*.tsbuildinfo
 
 # Logs
 *.log
-
-# Static/build artifacts
-/app/static/build/
-/assets/build/
-build/
-dist/
 
 # Audio/temporary files common in this project
 *.wav
@@ -77,4 +87,3 @@ pip-wheel-metadata/
 
 # Tests output
 tests/_output/
-
