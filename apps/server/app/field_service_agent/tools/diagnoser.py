@@ -88,6 +88,7 @@ async def _call_diagnoser(
             thinking_config=genai.types.ThinkingConfig(thinking_budget=4096),
             response_mime_type="application/json",
             response_schema=DIAGNOSIS_STEP_SCHEMA,
+            tools=[genai.types.Tool(google_search=genai.types.GoogleSearch())],
         ),
     )
     raw = response.text.strip()

@@ -40,6 +40,22 @@ export interface GroundingResultEvent {
     mimeType: string;
 }
 
+export interface ToolCompleteEvent {
+    type: "tool_complete";
+    tool: string;
+    message: string;
+}
+
+export interface AnnotationFailedEvent {
+    type: "annotation_failed";
+    message: string;
+}
+
+export interface WelcomeEvent {
+    type: "welcome";
+    text: string;
+}
+
 export interface InlineData {
     mimeType: string;
     data: string; // base64
@@ -81,6 +97,9 @@ export type DownstreamEvent =
     | AgentStatusEvent
     | GroundingStatusEvent
     | GroundingResultEvent
+    | ToolCompleteEvent
+    | AnnotationFailedEvent
+    | WelcomeEvent
     | AdkEvent;
 
 // ---------- Chat messages (UI state) ----------

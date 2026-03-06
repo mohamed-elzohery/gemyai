@@ -94,6 +94,7 @@ async def replan_fix(
                 thinking_config=genai.types.ThinkingConfig(thinking_budget=2048),
                 response_mime_type="application/json",
                 response_schema=REPLAN_RESULT_SCHEMA,
+                tools=[genai.types.Tool(google_search=genai.types.GoogleSearch())],
             ),
         )
         raw = response.text.strip()

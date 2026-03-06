@@ -4,6 +4,7 @@ Uses gemini-3-flash-preview for bounding-box detection, then PIL to draw
 red ellipses on the original image so the user can see what was found.
 """
 
+import asyncio
 import base64
 import io
 import json
@@ -220,19 +221,39 @@ async def annotate_image(query: str, tool_context: ToolContext) -> dict[str, str
 
     try:
         client = _get_client()
-        response = await client.aio.models.generate_content(
-            model=GROUNDING_MODEL,
-            contents=[
-                genai.types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                genai.types.Part.from_text(text=prompt),
-            ],
-            config=genai.types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=detection_schema,
-            ),
+        logger.info(
+            "[Annotation] Calling grounding model %s with %d bytes image...",
+            GROUNDING_MODEL,
+            len(image_bytes),
         )
-        raw_text = response.text.strip()
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model=GROUNDING_MODEL,
+                contents=[
+                    genai.types.Part.from_bytes(
+                        data=image_bytes, mime_type="image/jpeg"
+                    ),
+                    genai.types.Part.from_text(text=prompt),
+                ],
+                config=genai.types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=detection_schema,
+                ),
+            ),
+            timeout=30.0,
+        )
+        raw_text = response.text.strip() if response.text else ""
         logger.info("[Annotation] Grounding model raw response: %s", raw_text)
+
+        if not raw_text:
+            logger.warning("[Annotation] Grounding model returned empty response")
+            return {
+                "status": "no_detections",
+                "description": (
+                    "The vision model returned an empty response. "
+                    "Try pointing the camera directly at the area."
+                ),
+            }
 
         detections = json.loads(raw_text)
         if not isinstance(detections, list):
@@ -245,6 +266,15 @@ async def annotate_image(query: str, tool_context: ToolContext) -> dict[str, str
             if isinstance(d.get("box_2d"), list) and len(d["box_2d"]) == 4
         ]
 
+    except asyncio.TimeoutError:
+        logger.error("[Annotation] Grounding model call timed out after 30s")
+        return {
+            "status": "error",
+            "description": (
+                "Visual grounding timed out. The image analysis took too long. "
+                "Try again or describe the location verbally."
+            ),
+        }
     except Exception as e:
         logger.error("[Annotation] Grounding model call failed: %s", e, exc_info=True)
         return {
@@ -298,6 +328,8 @@ async def annotate_image(query: str, tool_context: ToolContext) -> dict[str, str
         "status": "success",
         "description": (
             f"Marked {len(detections)} region(s) on the image: {', '.join(labels)}. "
-            "The annotated image has been sent to the user."
+            "The annotated image is being delivered to the user. "
+            "Note: if the image fails to display on the user's device, "
+            "describe the location verbally as a fallback."
         ),
     }

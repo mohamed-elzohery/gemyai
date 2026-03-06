@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
+import CircularProgress from "@mui/material/CircularProgress";
+import Typography from "@mui/material/Typography";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
 import type {
@@ -8,6 +10,8 @@ import type {
   AdkEvent,
   AgentStatusEvent,
   GroundingResultEvent,
+  AnnotationFailedEvent,
+  WelcomeEvent,
 } from "../types";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useAudioPlayer } from "../hooks/useAudioPlayer";
@@ -16,6 +20,7 @@ import { useCamera } from "../hooks/useCamera";
 import { useVAD } from "../hooks/useVAD";
 import { base64ToArray } from "../utils/audio";
 import { cleanCJKSpaces, randomId } from "../utils/textHelpers";
+import { useAuth } from "../contexts/AuthContext";
 
 import SessionTopBar from "../components/SessionTopBar";
 import SessionBottomBar from "../components/SessionBottomBar";
@@ -24,9 +29,9 @@ import type { ResponseState } from "../components/ResponsePreview";
 import CameraPreview from "../components/CameraPreview";
 import ConfirmDialog from "../components/ConfirmDialog";
 
-const userId = "demo-user";
-
 export default function SessionPage() {
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
   const { id: sessionId = "default" } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const theme = useTheme();
@@ -108,9 +113,12 @@ export default function SessionPage() {
 
   // ---- VAD callbacks ----
   const handleSpeechStart = useCallback(() => {
-    console.log("[VAD] Speech START");
+    console.log("[VAD] Speech START — interrupting agent audio");
     isSpeakingRef.current = true;
     setIsSpeaking(true);
+
+    // Immediately stop agent audio playback so the user can speak
+    audioPlayer.stop();
 
     // Resume audio stream so PCM data flows to the server
     audioRecorder.resume();
@@ -134,7 +142,7 @@ export default function SessionPage() {
         imageStreamIntervalRef.current = null;
       }
     }, MAX_SPEECH_DURATION_MS);
-  }, [captureAndSendSnapshot, audioRecorder]);
+  }, [captureAndSendSnapshot, audioRecorder, audioPlayer]);
 
   const handleSpeechEnd = useCallback(
     (_audio: Float32Array) => {
@@ -194,6 +202,42 @@ export default function SessionPage() {
           id,
           type: "agent-status",
           text: e.message,
+        });
+        return;
+      }
+
+      // --- Tool complete (dismiss agent_status spinner) ---
+      if (evt.type === "tool_complete") {
+        if (agentStatusIdRef.current) {
+          removeMessage(agentStatusIdRef.current);
+          agentStatusIdRef.current = null;
+        }
+        return;
+      }
+
+      // --- Annotation failed ---
+      if (evt.type === "annotation_failed") {
+        const e = evt as unknown as AnnotationFailedEvent;
+        if (agentStatusIdRef.current) {
+          removeMessage(agentStatusIdRef.current);
+          agentStatusIdRef.current = null;
+        }
+        addMessage({
+          id: randomId(),
+          type: "system",
+          text: e.message,
+        });
+        return;
+      }
+
+      // --- Welcome message ---
+      if (evt.type === "welcome") {
+        const e = evt as unknown as WelcomeEvent;
+        addMessage({
+          id: randomId(),
+          type: "output-transcription",
+          text: e.text,
+          isPartial: false,
         });
         return;
       }
@@ -668,6 +712,28 @@ export default function SessionPage() {
   ]);
 
   const showCameraPreview = cameraOn && previewVisible;
+
+  // ---- Show connecting screen until WebSocket is ready ----
+  if (!ws.connected) {
+    return (
+      <Box
+        sx={{
+          height: "100dvh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          bgcolor: "background.default",
+          gap: 3,
+        }}
+      >
+        <CircularProgress size={48} />
+        <Typography variant="body1" color="text.secondary">
+          Connecting to session...
+        </Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box

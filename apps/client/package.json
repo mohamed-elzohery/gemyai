@@ -16,6 +16,7 @@
     "@fontsource/atkinson-hyperlegible": "^5.2.8",
     "@mui/icons-material": "^7.0.0",
     "@mui/material": "^7.0.0",
+    "@react-oauth/google": "^0.13.4",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@ricky0123/vad-web": "^0.0.29",

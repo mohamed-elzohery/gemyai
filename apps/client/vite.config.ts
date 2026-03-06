@@ -16,10 +16,17 @@ export default defineConfig(({ command }) => ({
         },
     },
     server: {
+        headers: {
+            // Allow Google Sign-In popup to postMessage back to this page
+            "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+        },
         proxy: {
             "/ws": {
                 target: "http://localhost:8000",
                 ws: true,
+            },
+            "/api": {
+                target: "http://localhost:8000",
             },
         },
     },

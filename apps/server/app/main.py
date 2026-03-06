@@ -8,8 +8,8 @@ import warnings
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
@@ -28,6 +28,15 @@ from field_service_agent.visual_grounding import (  # noqa: E402
     get_annotated_image,
     store_latest_image,
 )
+from auth import (  # noqa: E402
+    verify_google_token,
+    create_jwt,
+    get_current_user,
+    get_ws_user,
+    COOKIE_NAME,
+    JWT_EXPIRY_DAYS,
+)
+from user_service import get_or_create_user  # noqa: E402
 
 # Configure logging — quiet by default, verbose for the annotation flow
 logging.basicConfig(
@@ -41,6 +50,9 @@ logger.setLevel(logging.INFO)
 logging.getLogger("field_service_agent.visual_grounding").setLevel(logging.DEBUG)
 # Let sub-agent tool logs through
 logging.getLogger("field_service_agent.tools").setLevel(logging.DEBUG)
+# Let auth / user-service logs through
+logging.getLogger("auth").setLevel(logging.INFO)
+logging.getLogger("user_service").setLevel(logging.INFO)
 
 # Suppress Pydantic serialization warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
@@ -57,6 +69,7 @@ _INTERNAL_TOOLS = {
     "replan_fix",
     "get_current_step",
     "report_step_result",
+    "google_search",
 }
 
 _TOOL_STATUS_MESSAGES = {
@@ -67,6 +80,7 @@ _TOOL_STATUS_MESSAGES = {
     "replan_fix": "Adjusting the plan...",
     "get_current_step": "Loading the next step...",
     "report_step_result": "Recording step result...",
+    "google_search": "Searching the web...",
 }
 
 
@@ -152,6 +166,91 @@ async def _spa_fallback(full_path: str):
 
 
 # ========================================
+# Auth Endpoints
+# ========================================
+
+
+@app.post("/api/auth/google")
+async def auth_google(request: Request):
+    """Exchange a Google ID token for a session cookie."""
+    body = await request.json()
+    credential = body.get("credential")
+    if not credential:
+        return JSONResponse({"error": "Missing credential"}, status_code=400)
+
+    # Verify the Google ID token (raises HTTPException on failure)
+    idinfo = verify_google_token(credential)
+
+    # Persist user in Firestore (best-effort — don't let DB errors block login)
+    try:
+        user = get_or_create_user(
+            google_id=idinfo["sub"],
+            email=idinfo.get("email", ""),
+            name=idinfo.get("name", ""),
+            picture=idinfo.get("picture", ""),
+        )
+    except Exception as db_exc:
+        # Log the real error but fall back to token data so login still works
+        logger.error("Firestore user upsert failed (using token data as fallback): %s", db_exc, exc_info=True)
+        user = {
+            "google_id": idinfo["sub"],
+            "email": idinfo.get("email", ""),
+            "name": idinfo.get("name", ""),
+            "picture": idinfo.get("picture", ""),
+        }
+
+    # Create session JWT
+    token = create_jwt(
+        user_id=idinfo["sub"],
+        email=user["email"],
+        name=user["name"],
+        picture=user["picture"],
+    )
+
+    response = JSONResponse(
+        {
+            "user": {
+                "id": idinfo["sub"],
+                "email": user["email"],
+                "name": user["name"],
+                "picture": user["picture"],
+            }
+        }
+    )
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=False,  # Set True in production with HTTPS
+        samesite="lax",
+        max_age=JWT_EXPIRY_DAYS * 86400,
+        path="/",
+    )
+    return response
+
+
+@app.get("/api/auth/me")
+async def auth_me(user: dict = Depends(get_current_user)):
+    """Return the currently authenticated user from the session cookie."""
+    return {
+        "user": {
+            "id": user["sub"],
+            "email": user.get("email", ""),
+            "name": user.get("name", ""),
+            "picture": user.get("picture", ""),
+        }
+    }
+
+
+@app.post("/api/auth/logout")
+async def auth_logout():
+    """Clear the session cookie."""
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(key=COOKIE_NAME, path="/")
+    return response
+
+
+# ========================================
 # WebSocket Endpoint
 # ========================================
 
@@ -177,6 +276,19 @@ async def websocket_endpoint(
         f"WebSocket connection request: user_id={user_id}, session_id={session_id}, "
         f"proactivity={proactivity}, affective_dialog={affective_dialog}"
     )
+
+    # --- Authenticate via session cookie ---
+    ws_user = get_ws_user(websocket)
+    if ws_user is None:
+        logger.warning("WebSocket auth failed — no valid session cookie")
+        await websocket.close(code=4001, reason="Not authenticated")
+        return
+    # Override user_id with the authenticated Google ID
+    user_id = ws_user["sub"]
+    logger.info(
+        "WebSocket authenticated as %s <%s>", ws_user.get("name"), ws_user.get("email")
+    )
+
     await websocket.accept()
 
     # ========================================
@@ -267,6 +379,29 @@ async def websocket_endpoint(
         # Ensure ws_session_id is set for reconnections
         session.state["ws_session_id"] = session_id
     live_request_queue = LiveRequestQueue()
+
+    # ========================================
+    # Phase 2b: Send welcome message & queue greeting prompt
+    # ========================================
+    _WELCOME_TEXT = (
+        "Hey, I am Gemmy! I can help you fix your stuff. " "What do we have today?"
+    )
+    await websocket.send_text(json.dumps({"type": "welcome", "text": _WELCOME_TEXT}))
+    logger.info("[Welcome] Sent welcome text to client")
+
+    # Queue a greeting prompt so the native-audio model speaks the welcome
+    live_request_queue.send_content(
+        types.Content(
+            parts=[
+                types.Part(
+                    text=(
+                        "The user just connected. Greet them warmly. "
+                        "Say exactly: " + _WELCOME_TEXT
+                    )
+                )
+            ]
+        )
+    )
 
     # ========================================
     # Phase 3: Active Session (concurrent bidirectional communication)
@@ -376,12 +511,25 @@ async def websocket_endpoint(
                         and part.function_response.name in _INTERNAL_TOOLS
                     ):
                         skip_event = True
+                        tool_resp_name = part.function_response.name
                         logger.info(
                             "[Downstream] Skipped function_response for %s",
-                            part.function_response.name,
+                            tool_resp_name,
                         )
+
+                        # Send tool_complete event so client knows the tool finished
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "tool_complete",
+                                    "tool": tool_resp_name,
+                                    "message": f"{_TOOL_STATUS_MESSAGES.get(tool_resp_name, 'Done')} Done.",
+                                }
+                            )
+                        )
+
                         # Deliver annotated image immediately on annotate_image response
-                        if part.function_response.name == "annotate_image":
+                        if tool_resp_name == "annotate_image":
                             annotated_b64 = get_annotated_image(session_id)
                             if annotated_b64:
                                 logger.info(
@@ -403,6 +551,18 @@ async def websocket_endpoint(
                                     "[Annotation] annotate_image response received "
                                     "but no annotated image found for session %s",
                                     session_id,
+                                )
+                                # Notify client that annotation failed
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "type": "annotation_failed",
+                                            "message": (
+                                                "Could not highlight the image. "
+                                                "Try pointing the camera closer to the area."
+                                            ),
+                                        }
+                                    )
                                 )
 
                     # --- 3. Filter thinking / reasoning text ---
