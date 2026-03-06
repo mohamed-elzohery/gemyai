@@ -112,6 +112,9 @@ export default function SessionPage() {
     isSpeakingRef.current = true;
     setIsSpeaking(true);
 
+    // Resume audio stream so PCM data flows to the server
+    audioRecorder.resume();
+
     sendJsonRef.current({ type: "activity_start" });
 
     // Capture first snapshot immediately
@@ -131,7 +134,7 @@ export default function SessionPage() {
         imageStreamIntervalRef.current = null;
       }
     }, MAX_SPEECH_DURATION_MS);
-  }, [captureAndSendSnapshot]);
+  }, [captureAndSendSnapshot, audioRecorder]);
 
   const handleSpeechEnd = useCallback(
     (_audio: Float32Array) => {
@@ -151,9 +154,12 @@ export default function SessionPage() {
       isSpeakingRef.current = false;
       setIsSpeaking(false);
 
+      // Pause audio stream so no PCM data flows while user is silent
+      audioRecorder.pause();
+
       sendJsonRef.current({ type: "activity_end" });
     },
-    [captureAndSendSnapshot],
+    [captureAndSendSnapshot, audioRecorder],
   );
 
   const vadHook = useVAD({
@@ -637,10 +643,10 @@ export default function SessionPage() {
   })();
 
   // Override: if user is currently speaking, always show listening
-  const finalResponse: ResponseState =
-    isSpeaking && responseState.mode === "idle"
-      ? { mode: "listening" }
-      : responseState;
+  // regardless of previous response mode (stale agent messages, etc.)
+  const finalResponse: ResponseState = isSpeaking
+    ? { mode: "listening" }
+    : responseState;
 
   // Log response state changes for debugging
   useEffect(() => {

@@ -158,8 +158,9 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
             <Orb agentState={orbAgentState} colors={orbColors} />
           </Box>
 
-          {/* Status text shown for thinking mode */}
-          {response.mode === "thinking" && response.statusText && (
+          {/* Phase label below the orb — Listening / Thinking */}
+          {(response.mode === "listening" ||
+            (response.mode === "thinking" && response.statusText)) && (
             <Typography
               variant="body1"
               sx={{
@@ -176,7 +177,9 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
                 },
               }}
             >
-              {response.statusText}
+              {response.mode === "listening"
+                ? "Listening..."
+                : response.statusText}
             </Typography>
           )}
         </Box>

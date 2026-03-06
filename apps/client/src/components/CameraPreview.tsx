@@ -15,6 +15,12 @@ export default function CameraPreview({ visible }: CameraPreviewProps) {
         position: "relative",
         overflow: "hidden",
         borderRadius: 3,
+        // Add responsive padding top here
+        // 'md' is the medium breakpoint (900px by default)
+        pt: {
+          xs: 0, // 0px on extra-small/small screens
+          md: 4, // 32px on medium screens and up (4 * 8px theme spacing)
+        },
       }}
     >
       <Box

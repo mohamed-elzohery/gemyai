@@ -85,6 +85,7 @@ async def _call_diagnoser(
         contents=parts,
         config=genai.types.GenerateContentConfig(
             system_instruction=_DIAGNOSER_SYSTEM,
+            thinking_config=genai.types.ThinkingConfig(thinking_budget=4096),
             response_mime_type="application/json",
             response_schema=DIAGNOSIS_STEP_SCHEMA,
         ),
@@ -146,8 +147,8 @@ async def start_diagnosis(
             error codes, and any other relevant details mentioned.
         tool_context: Injected by ADK — provides session state.
     """
+    session_id = tool_context.session.id
     state = tool_context.session.state
-    session_id = state.get("ws_session_id", tool_context.session.id)
     logger.info(
         "[Diagnoser] start_diagnosis called: summary=%r, session=%s",
         problem_summary,
@@ -201,8 +202,8 @@ async def submit_diagnosis_answer(
             question, including any observations they described.
         tool_context: Injected by ADK — provides session state.
     """
+    session_id = tool_context.session.id
     state = tool_context.session.state
-    session_id = state.get("ws_session_id", tool_context.session.id)
     logger.info(
         "[Diagnoser] submit_diagnosis_answer called: answer=%r, session=%s",
         answer_text,
