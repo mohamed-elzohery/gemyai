@@ -291,13 +291,16 @@ async def websocket_endpoint(
 
                 # Handle activity signals (client-side VAD)
                 if json_message.get("type") == "activity_start":
+                    logger.info("[Upstream] ▲ activity_start")
                     live_request_queue.send_activity_start()
 
                 elif json_message.get("type") == "activity_end":
+                    logger.info("[Upstream] ▲ activity_end")
                     live_request_queue.send_activity_end()
 
                 # Extract text from JSON and send to LiveRequestQueue
                 elif json_message.get("type") == "text":
+                    logger.info("[Upstream] ▲ text: %s", json_message["text"][:120])
                     content = types.Content(
                         parts=[types.Part(text=json_message["text"])]
                     )
@@ -308,6 +311,9 @@ async def websocket_endpoint(
                     # Decode base64 image data
                     image_data = base64.b64decode(json_message["data"])
                     mime_type = json_message.get("mimeType", "image/jpeg")
+                    logger.info(
+                        "[Upstream] ▲ image (%s, %d bytes)", mime_type, len(image_data)
+                    )
 
                     # Cache the latest camera frame for visual grounding
                     store_latest_image(session_id, image_data)
@@ -315,6 +321,11 @@ async def websocket_endpoint(
                     # Send image as blob
                     image_blob = types.Blob(mime_type=mime_type, data=image_data)
                     live_request_queue.send_realtime(image_blob)
+
+                else:
+                    logger.info(
+                        "[Upstream] ▲ unknown json type: %s", json_message.get("type")
+                    )
 
     async def downstream_task() -> None:
         """Receives Events from run_live() and sends to WebSocket."""
@@ -351,6 +362,11 @@ async def websocket_endpoint(
                             )
                         )
                         skip_event = True
+                        logger.info(
+                            "[Downstream] Skipped function_call for %s → status: '%s'",
+                            tool_name,
+                            status_msg,
+                        )
 
                     # --- 2. Intercept function_response events ---
                     if (
@@ -358,6 +374,10 @@ async def websocket_endpoint(
                         and part.function_response.name in _INTERNAL_TOOLS
                     ):
                         skip_event = True
+                        logger.info(
+                            "[Downstream] Skipped function_response for %s",
+                            part.function_response.name,
+                        )
                         # Deliver annotated image immediately on annotate_image response
                         if part.function_response.name == "annotate_image":
                             annotated_b64 = get_annotated_image(session_id)
@@ -396,6 +416,47 @@ async def websocket_endpoint(
                         skip_event = True
 
             if not skip_event:
+                # Log the downstream event for debugging
+                try:
+                    evt_summary = json.loads(event_json)
+                    parts_info = ""
+                    if "content" in evt_summary and evt_summary["content"]:
+                        parts = evt_summary["content"].get("parts", [])
+                        part_types = []
+                        for p in parts:
+                            if "text" in p:
+                                part_types.append(f"text({len(p['text'])}ch)")
+                            elif "inlineData" in p:
+                                mime = p["inlineData"].get("mimeType", "?")
+                                part_types.append(f"data({mime})")
+                            elif "functionCall" in p:
+                                part_types.append(
+                                    f"fn_call({p['functionCall'].get('name','?')})"
+                                )
+                            elif "functionResponse" in p:
+                                part_types.append(
+                                    f"fn_resp({p['functionResponse'].get('name','?')})"
+                                )
+                        parts_info = f" parts=[{', '.join(part_types)}]"
+                    flags = []
+                    if evt_summary.get("turnComplete"):
+                        flags.append("turnComplete")
+                    if evt_summary.get("interrupted"):
+                        flags.append("interrupted")
+                    if evt_summary.get("partial"):
+                        flags.append("partial")
+                    if evt_summary.get("inputTranscription"):
+                        txt = evt_summary["inputTranscription"].get("text", "")[:60]
+                        fin = evt_summary["inputTranscription"].get("finished", False)
+                        flags.append(f"inputTrans(fin={fin},'{txt}')")
+                    if evt_summary.get("outputTranscription"):
+                        txt = evt_summary["outputTranscription"].get("text", "")[:60]
+                        fin = evt_summary["outputTranscription"].get("finished", False)
+                        flags.append(f"outputTrans(fin={fin},'{txt}')")
+                    flag_str = " " + " ".join(flags) if flags else ""
+                    logger.info("[Downstream] ▼%s%s", parts_info, flag_str)
+                except Exception:
+                    logger.info("[Downstream] ▼ (raw event)")
                 await websocket.send_text(event_json)
 
     async def image_delivery_task() -> None:

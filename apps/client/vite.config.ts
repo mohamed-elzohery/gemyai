@@ -7,6 +7,13 @@ export default defineConfig(({ command }) => ({
     build: {
         outDir: "../server/app/static",
         emptyOutDir: true,
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    three: ["three", "@react-three/fiber", "@react-three/drei"],
+                },
+            },
+        },
     },
     server: {
         proxy: {

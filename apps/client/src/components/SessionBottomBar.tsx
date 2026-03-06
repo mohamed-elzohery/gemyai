@@ -9,6 +9,7 @@ import MicIcon from "@mui/icons-material/Mic";
 import MicOffIcon from "@mui/icons-material/MicOff";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import CameraswitchIcon from "@mui/icons-material/Cameraswitch";
 
 interface SessionBottomBarProps {
   visible: boolean;
@@ -19,6 +20,7 @@ interface SessionBottomBarProps {
   onToggleCamera: () => void;
   onToggleMic: () => void;
   onTogglePreview: () => void;
+  onSwitchCamera?: () => void;
 }
 
 export default function SessionBottomBar({
@@ -30,6 +32,7 @@ export default function SessionBottomBar({
   onToggleCamera,
   onToggleMic,
   onTogglePreview,
+  onSwitchCamera,
 }: SessionBottomBarProps) {
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
@@ -47,16 +50,22 @@ export default function SessionBottomBar({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        gap: { xs: 2, md: 3 },
+        gap: { xs: 1.5, md: 3 },
         px: 2,
         py: 1.5,
         pb: { xs: "max(env(safe-area-inset-bottom, 12px), 12px)", md: 1.5 },
         bgcolor: "rgba(255,255,255,0.85)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
-        borderTop: "1px solid",
+        borderTop: { xs: "none", md: "1px solid" },
         borderColor: "divider",
-        transform: show ? "translateY(0)" : "translateY(100%)",
+        // Mobile: pill shape, inset from edges
+        mx: { xs: 1, md: 0 },
+        mb: { xs: 1, md: 0 },
+        width: { xs: "calc(100% - 16px)", md: "100%" },
+        borderRadius: { xs: 9999, md: 0 },
+        boxShadow: { xs: "0 2px 8px rgba(0,0,0,0.10)", md: "none" },
+        transform: show ? "translateY(0)" : "translateY(calc(100% + 16px))",
         transition: "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
         pointerEvents: show ? "auto" : "none",
       }}
@@ -147,6 +156,26 @@ export default function SessionBottomBar({
           <VisibilityOffIcon />
         )}
       </IconButton>
+
+      {/* Camera switch — mobile only */}
+      {!isDesktop && onSwitchCamera && (
+        <IconButton
+          onClick={onSwitchCamera}
+          disabled={!cameraOn}
+          aria-label="Switch camera"
+          sx={{
+            width: 48,
+            height: 48,
+            bgcolor: cameraOn ? "action.hover" : "grey.200",
+            color: cameraOn ? "text.primary" : "grey.400",
+            "&:hover": {
+              bgcolor: cameraOn ? "action.selected" : "grey.200",
+            },
+          }}
+        >
+          <CameraswitchIcon />
+        </IconButton>
+      )}
     </Box>
   );
 }

@@ -58,24 +58,28 @@ export function useWebSocket({
         const ws = new WebSocket(url);
 
         ws.onopen = () => {
+            console.log("[WS] Connected to", url);
             setConnected(true);
             onConnectedRef.current();
         };
 
         ws.onmessage = (event: MessageEvent) => {
             if (event.data instanceof Blob) {
+                console.debug(`[WS ▼ BINARY] ${event.data.size} bytes`);
                 event.data.arrayBuffer().then((buf) => onBinaryRef.current(buf));
             } else {
                 try {
                     const parsed = JSON.parse(event.data);
+                    console.log("[WS ▼ RECV]", parsed);
                     onMessageRef.current(parsed);
                 } catch {
-                    console.warn("Failed to parse WS message:", event.data);
+                    console.warn("[WS] Failed to parse message:", event.data);
                 }
             }
         };
 
         ws.onclose = () => {
+            console.log("[WS] Disconnected");
             setConnected(false);
             onDisconnectedRef.current();
             // Only auto-reconnect if this wasn't a deliberate teardown
@@ -106,12 +110,14 @@ export function useWebSocket({
 
     const sendJson = useCallback((data: unknown) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
+            console.log("[WS ▲ SEND]", data);
             wsRef.current.send(JSON.stringify(data));
         }
     }, []);
 
     const sendBinary = useCallback((data: ArrayBuffer) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
+            console.debug(`[WS ▲ BINARY] ${data.byteLength} bytes`);
             wsRef.current.send(data);
         }
     }, []);

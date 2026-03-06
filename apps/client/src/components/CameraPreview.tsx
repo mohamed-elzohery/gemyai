@@ -14,6 +14,7 @@ export default function CameraPreview({ visible }: CameraPreviewProps) {
         bgcolor: "#000",
         position: "relative",
         overflow: "hidden",
+        borderRadius: 3,
       }}
     >
       <Box

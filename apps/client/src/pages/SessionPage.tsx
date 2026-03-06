@@ -108,6 +108,7 @@ export default function SessionPage() {
 
   // ---- VAD callbacks ----
   const handleSpeechStart = useCallback(() => {
+    console.log("[VAD] Speech START");
     isSpeakingRef.current = true;
     setIsSpeaking(true);
 
@@ -146,6 +147,7 @@ export default function SessionPage() {
       // Final snapshot while still speaking
       captureAndSendSnapshot();
 
+      console.log("[VAD] Speech END");
       isSpeakingRef.current = false;
       setIsSpeaking(false);
 
@@ -163,6 +165,16 @@ export default function SessionPage() {
   const handleWsMessage = useCallback(
     (parsed: unknown) => {
       const evt = parsed as Record<string, unknown>;
+      const evtType =
+        evt.type ??
+        (evt.turnComplete
+          ? "turnComplete"
+          : evt.interrupted
+            ? "interrupted"
+            : evt.content
+              ? "content"
+              : "unknown");
+      console.log(`[MSG] ${evtType}`, evt);
 
       // --- Agent status ---
       if (evt.type === "agent_status") {
@@ -571,6 +583,10 @@ export default function SessionPage() {
     setPreviewVisible((prev) => !prev);
   }, []);
 
+  const handleSwitchCamera = useCallback(() => {
+    camera.switchCamera();
+  }, [camera]);
+
   // ---- Derive response state from messages ----
   const responseState: ResponseState = (() => {
     if (!sessionStarted) {
@@ -586,14 +602,14 @@ export default function SessionPage() {
         return { mode: "image", imageUrl: msg.imageUrl };
       }
 
-      // Agent status → show status
+      // Agent status → show thinking
       if (msg.type === "agent-status") {
-        return { mode: "status", statusText: msg.text };
+        return { mode: "thinking", statusText: msg.text };
       }
 
-      // Grounding loading → show status
+      // Grounding loading → show thinking
       if (msg.type === "grounding-loading") {
-        return { mode: "status", statusText: msg.text };
+        return { mode: "thinking", statusText: msg.text };
       }
 
       // Agent text → show text streaming
@@ -626,6 +642,25 @@ export default function SessionPage() {
       ? { mode: "listening" }
       : responseState;
 
+  // Log response state changes for debugging
+  useEffect(() => {
+    console.log(
+      `[STATE] mode=${finalResponse.mode} isSpeaking=${isSpeaking} msgs=${messages.length}`,
+      finalResponse.mode === "text"
+        ? `text=${(finalResponse.text ?? "").slice(0, 60)}...`
+        : "",
+      finalResponse.mode === "thinking"
+        ? `status=${finalResponse.statusText}`
+        : "",
+    );
+  }, [
+    finalResponse.mode,
+    finalResponse.text,
+    finalResponse.statusText,
+    isSpeaking,
+    messages.length,
+  ]);
+
   const showCameraPreview = cameraOn && previewVisible;
 
   return (
@@ -636,15 +671,15 @@ export default function SessionPage() {
         width: "100%",
         display: "grid",
         gridTemplateRows: showCameraPreview ? "7fr 3fr" : "1fr",
-        transition: "grid-template-rows 0.3s ease",
+        gap: { xs: 0.75, md: 1 },
+        p: { xs: 0.75, md: 1.5 },
         bgcolor: "background.default",
         overflow: "hidden",
         position: "relative",
-        // Touch action for native gestures
+        boxSizing: "border-box",
         touchAction: "manipulation",
         userSelect: "none",
         WebkitUserSelect: "none",
-        // Desktop layout
         [theme.breakpoints.up("md")]: {
           gridTemplateRows: "1fr",
           gridTemplateColumns: showCameraPreview ? "7fr 3fr" : "1fr",
@@ -657,6 +692,8 @@ export default function SessionPage() {
           overflow: "hidden",
           position: "relative",
           minHeight: 0,
+          borderRadius: 3,
+          boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
         }}
       >
         <ResponsePreview response={finalResponse} />
@@ -665,14 +702,14 @@ export default function SessionPage() {
       {/* Camera Preview Area */}
       <CameraPreview visible={showCameraPreview} />
 
-      {/* Top bar */}
+      {/* Top bar (fixed overlay) */}
       <SessionTopBar
         visible={barsVisible}
         connected={ws.connected}
         onBack={() => setConfirmOpen(true)}
       />
 
-      {/* Bottom bar */}
+      {/* Bottom bar (fixed overlay) */}
       <SessionBottomBar
         visible={barsVisible}
         cameraOn={cameraOn}
@@ -682,6 +719,7 @@ export default function SessionPage() {
         onToggleCamera={handleToggleCamera}
         onToggleMic={handleToggleMic}
         onTogglePreview={handleTogglePreview}
+        onSwitchCamera={handleSwitchCamera}
       />
 
       {/* Confirm exit dialog */}

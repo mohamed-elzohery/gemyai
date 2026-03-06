@@ -1,11 +1,13 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import VoiceOrb from "./VoiceOrb";
+import { useTheme } from "@mui/material/styles";
+import Orb from "./Orb";
+import type { AgentState } from "./Orb";
 import ImageViewerModal from "./ImageViewerModal";
 
 export interface ResponseState {
-  mode: "idle" | "listening" | "text" | "image" | "status";
+  mode: "idle" | "listening" | "text" | "image" | "thinking";
   text?: string;
   imageUrl?: string;
   statusText?: string;
@@ -17,6 +19,7 @@ interface ResponsePreviewProps {
 }
 
 export default function ResponsePreview({ response }: ResponsePreviewProps) {
+  const theme = useTheme();
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [imageModalOpen, setImageModalOpen] = useState(false);
@@ -29,7 +32,6 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
     const el = containerRef.current;
     if (!el) return;
     const { scrollTop, scrollHeight, clientHeight } = el;
-    // If the user scrolled up (away from bottom), mark it
     const isNearBottom = scrollHeight - scrollTop - clientHeight < 60;
     if (scrollTop < prevScrollTopRef.current && !isNearBottom) {
       userScrolledRef.current = true;
@@ -51,6 +53,74 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
     userScrolledRef.current = false;
   }, [response.mode]);
 
+  // ---------------------------------------------------------------------------
+  // Map response mode → Orb AgentState
+  // ---------------------------------------------------------------------------
+  const orbAgentState: AgentState = useMemo(() => {
+    switch (response.mode) {
+      case "listening":
+        return "listening";
+      case "thinking":
+        return "thinking";
+      case "text":
+        return "talking";
+      default:
+        return null;
+    }
+  }, [response.mode]);
+
+  // Color presets per state
+  const orbColors: [string, string] = useMemo(() => {
+    switch (response.mode) {
+      case "listening":
+        return [theme.palette.primary.light, theme.palette.primary.main];
+      case "thinking":
+        return [theme.palette.secondary.light, theme.palette.secondary.main];
+      default:
+        return ["#90CAF9", "#42A5F5"];
+    }
+  }, [response.mode, theme]);
+
+  // ---------------------------------------------------------------------------
+  // Text with last-word primary-color highlight
+  // ---------------------------------------------------------------------------
+  const renderedText = useMemo(() => {
+    const raw = response.text ?? "";
+    if (!raw || !response.isPartial) return raw;
+
+    const trimmed = raw.trimEnd();
+    const lastSpace = trimmed.lastIndexOf(" ");
+    if (lastSpace < 0) {
+      return (
+        <>
+          <Box
+            component="span"
+            sx={{ color: "primary.main", transition: "color 0.2s" }}
+          >
+            {trimmed}
+          </Box>
+          {raw.slice(trimmed.length)}
+        </>
+      );
+    }
+
+    return (
+      <>
+        {trimmed.slice(0, lastSpace + 1)}
+        <Box
+          component="span"
+          sx={{ color: "primary.main", transition: "color 0.2s" }}
+        >
+          {trimmed.slice(lastSpace + 1)}
+        </Box>
+        {raw.slice(trimmed.length)}
+      </>
+    );
+  }, [response.text, response.isPartial]);
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
   return (
     <Box
       sx={{
@@ -64,46 +134,51 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
         bgcolor: "background.default",
       }}
     >
-      {/* Idle / Listening → Orb */}
-      {(response.mode === "idle" || response.mode === "listening") && (
-        <VoiceOrb
-          state={response.mode === "listening" ? "listening" : "idle"}
-        />
-      )}
-
-      {/* Status → Pulsing status text with orb underneath */}
-      {response.mode === "status" && (
+      {/* Idle / Listening / Thinking → Orb */}
+      {(response.mode === "idle" ||
+        response.mode === "listening" ||
+        response.mode === "thinking") && (
         <Box
           sx={{
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            gap: 3,
             width: "100%",
             height: "100%",
+            position: "relative",
           }}
         >
-          <VoiceOrb state="listening" />
-          <Typography
-            variant="body1"
+          <Box
             sx={{
-              position: "absolute",
-              bottom: { xs: "8%", md: "12%" },
-              color: "text.secondary",
-              fontWeight: 600,
-              fontStyle: "italic",
-              textAlign: "center",
-              px: 3,
-              animation: "statusPulse 1.5s ease-in-out infinite",
-              "@keyframes statusPulse": {
-                "0%, 100%": { opacity: 0.6 },
-                "50%": { opacity: 1 },
-              },
+              width: { xs: 220, sm: 260, md: 300 },
+              height: { xs: 220, sm: 260, md: 300 },
             }}
           >
-            {response.statusText}
-          </Typography>
+            <Orb agentState={orbAgentState} colors={orbColors} />
+          </Box>
+
+          {/* Status text shown for thinking mode */}
+          {response.mode === "thinking" && response.statusText && (
+            <Typography
+              variant="body1"
+              sx={{
+                mt: 3,
+                color: "text.secondary",
+                fontWeight: 600,
+                fontStyle: "italic",
+                textAlign: "center",
+                px: 3,
+                animation: "statusPulse 1.5s ease-in-out infinite",
+                "@keyframes statusPulse": {
+                  "0%, 100%": { opacity: 0.6 },
+                  "50%": { opacity: 1 },
+                },
+              }}
+            >
+              {response.statusText}
+            </Typography>
+          )}
         </Box>
       )}
 
@@ -120,23 +195,23 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
             flexDirection: "column",
             justifyContent: "flex-start",
             px: { xs: 3, md: 6 },
-            py: { xs: 3, md: 4 },
+            py: { xs: 3, md: 12 },
             WebkitOverflowScrolling: "touch",
           }}
         >
           <Typography
             component="div"
             sx={{
-              fontSize: { xs: "1.4rem", sm: "1.6rem", md: "1.85rem" },
+              fontSize: { xs: "2rem" },
               fontWeight: 500,
-              lineHeight: 1.6,
+              lineHeight: 1.65,
               color: "text.primary",
               wordBreak: "break-word",
               whiteSpace: "pre-wrap",
               flexGrow: 1,
             }}
           >
-            {response.text}
+            {renderedText}
             {response.isPartial && (
               <Box
                 component="span"
@@ -160,7 +235,7 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
         </Box>
       )}
 
-      {/* Image → Full area image with tap to enlarge */}
+      {/* Image → Full area image with fade-in/scale transition */}
       {response.mode === "image" && response.imageUrl && (
         <>
           <Box
@@ -175,6 +250,11 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
               cursor: "pointer",
               userSelect: "none",
               WebkitTouchCallout: "none",
+              animation: "imageFadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
+              "@keyframes imageFadeIn": {
+                from: { opacity: 0, transform: "scale(0.92)" },
+                to: { opacity: 1, transform: "scale(1)" },
+              },
             }}
           />
           <ImageViewerModal

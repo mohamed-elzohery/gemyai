@@ -7,7 +7,8 @@ export function cleanCJKSpaces(text: string): string {
         /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\u4e00-\u9faf\uff00-\uffef]/;
 
     return text.replace(/(\S)\s+(?=\S)/g, (match, char1: string) => {
-        const nextCharMatch = text.match(new RegExp(char1 + "\\s+(.)", "g"));
+        const escaped = char1.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const nextCharMatch = text.match(new RegExp(escaped + "\\s+(.)", "g"));
         if (nextCharMatch && nextCharMatch.length > 0) {
             const char2 = nextCharMatch[0].slice(-1);
             if (cjkPattern.test(char1) && cjkPattern.test(char2)) {

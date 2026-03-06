@@ -85,7 +85,6 @@ async def _call_diagnoser(
         contents=parts,
         config=genai.types.GenerateContentConfig(
             system_instruction=_DIAGNOSER_SYSTEM,
-            thinking_config=genai.types.ThinkingConfig(thinking_budget=4096),
             response_mime_type="application/json",
             response_schema=DIAGNOSIS_STEP_SCHEMA,
         ),

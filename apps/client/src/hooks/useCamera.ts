@@ -6,20 +6,42 @@ import { useRef, useCallback } from "react";
 export function useCamera() {
     const streamRef = useRef<MediaStream | null>(null);
     const videoRef = useRef<HTMLVideoElement | null>(null);
+    const facingModeRef = useRef<"user" | "environment">("user");
 
-    /** Request camera access and attach to a <video> element. */
-    const init = useCallback(async (videoElement: HTMLVideoElement) => {
+    /** Internal helper — start stream with current facingMode. */
+    const startStream = useCallback(async (videoElement: HTMLVideoElement) => {
+        // Stop any previous tracks
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+
         const stream = await navigator.mediaDevices.getUserMedia({
             video: {
                 width: { ideal: 768 },
                 height: { ideal: 768 },
-                facingMode: "user",
+                facingMode: facingModeRef.current,
             },
         });
         videoElement.srcObject = stream;
         streamRef.current = stream;
         videoRef.current = videoElement;
     }, []);
+
+    /** Request camera access and attach to a <video> element. */
+    const init = useCallback(
+        async (videoElement: HTMLVideoElement) => {
+            await startStream(videoElement);
+        },
+        [startStream],
+    );
+
+    /** Toggle between front ("user") and rear ("environment") cameras. */
+    const switchCamera = useCallback(async () => {
+        facingModeRef.current =
+            facingModeRef.current === "user" ? "environment" : "user";
+        const videoEl = videoRef.current;
+        if (videoEl) {
+            await startStream(videoEl);
+        }
+    }, [startStream]);
 
     /** Capture a JPEG snapshot (max 768 px) and return base64 data. */
     const captureSnapshot = useCallback((): string | null => {
@@ -45,5 +67,5 @@ export function useCamera() {
         streamRef.current = null;
     }, []);
 
-    return { init, captureSnapshot, stop, streamRef, videoRef };
+    return { init, captureSnapshot, stop, switchCamera, streamRef, videoRef, facingModeRef };
 }
