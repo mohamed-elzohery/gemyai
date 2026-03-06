@@ -124,7 +124,9 @@ export default function VoiceOrb({ state }: VoiceOrbProps) {
           letterSpacing: 1,
           textTransform: "uppercase",
           transition: "color 0.3s ease",
-          animation: isListening ? "labelPulse 1.2s ease-in-out infinite" : "none",
+          animation: isListening
+            ? "labelPulse 1.2s ease-in-out infinite"
+            : "none",
           "@keyframes labelPulse": {
             "0%, 100%": { opacity: 1 },
             "50%": { opacity: 0.5 },

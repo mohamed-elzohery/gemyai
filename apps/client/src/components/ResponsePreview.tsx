@@ -66,7 +66,9 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
     >
       {/* Idle / Listening → Orb */}
       {(response.mode === "idle" || response.mode === "listening") && (
-        <VoiceOrb state={response.mode === "listening" ? "listening" : "idle"} />
+        <VoiceOrb
+          state={response.mode === "listening" ? "listening" : "idle"}
+        />
       )}
 
       {/* Status → Pulsing status text with orb underneath */}

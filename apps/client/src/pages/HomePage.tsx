@@ -53,8 +53,8 @@ export default function HomePage() {
         </Typography>
 
         <Typography variant="body1" color="text.secondary">
-          Your hands-free AI assistant.
-          Start a session to begin a voice conversation.
+          Your hands-free AI assistant. Start a session to begin a voice
+          conversation.
         </Typography>
 
         <Button

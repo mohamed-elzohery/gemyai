@@ -116,22 +116,22 @@ export default function SessionBottomBar({
       <IconButton
         onClick={onTogglePreview}
         disabled={!cameraOn}
-        aria-label={previewVisible ? "Hide camera preview" : "Show camera preview"}
+        aria-label={
+          previewVisible ? "Hide camera preview" : "Show camera preview"
+        }
         sx={{
           width: 48,
           height: 48,
-          bgcolor:
-            !cameraOn
-              ? "grey.200"
-              : previewVisible
-                ? "action.hover"
-                : "grey.300",
-          color:
-            !cameraOn
-              ? "grey.400"
-              : previewVisible
-                ? "text.primary"
-                : "text.secondary",
+          bgcolor: !cameraOn
+            ? "grey.200"
+            : previewVisible
+              ? "action.hover"
+              : "grey.300",
+          color: !cameraOn
+            ? "grey.400"
+            : previewVisible
+              ? "text.primary"
+              : "text.secondary",
           "&:hover": {
             bgcolor: cameraOn
               ? previewVisible

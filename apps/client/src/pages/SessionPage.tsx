@@ -1,9 +1,4 @@
-import {
-  useState,
-  useCallback,
-  useRef,
-  useEffect,
-} from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -68,8 +63,12 @@ export default function SessionPage() {
   const groundingLoadingIdRef = useRef<string | null>(null);
 
   // ---- Image streaming ----
-  const imageStreamIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const speechSafetyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const imageStreamIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
+  const speechSafetyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const MAX_SPEECH_DURATION_MS = 60000;
 
   // ---- Helpers to update messages by ID ----
