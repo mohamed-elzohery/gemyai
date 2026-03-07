@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import threading
+import time
 from typing import Any
 
 from google import genai
@@ -26,11 +27,49 @@ _lock = threading.Lock()
 _latest_images: dict[str, bytes] = {}  # raw JPEG bytes per session
 _annotated_images: dict[str, str] = {}  # base64 result per session
 
+# Rolling image buffer — stores (timestamp, jpeg_bytes) tuples per session
+_IMAGE_BUFFER_MAX = 10
+_image_buffers: dict[str, list[tuple[float, bytes]]] = {}
+
 
 def store_latest_image(session_id: str, image_bytes: bytes) -> None:
-    """Cache the most recent camera frame for a session."""
+    """Cache the most recent camera frame for a session.
+
+    Also appends to the rolling image buffer (max 10 frames, FIFO).
+    """
     with _lock:
         _latest_images[session_id] = image_bytes
+
+        # Append to rolling buffer
+        buf = _image_buffers.setdefault(session_id, [])
+        buf.append((time.time(), image_bytes))
+        # Trim to max size
+        if len(buf) > _IMAGE_BUFFER_MAX:
+            _image_buffers[session_id] = buf[-_IMAGE_BUFFER_MAX:]
+
+
+def get_image_buffer(session_id: str, max_count: int = 5) -> list[bytes]:
+    """Return the most recent N frames from the rolling buffer.
+
+    Falls back to any available session if the exact ID is not found.
+    Returns raw JPEG bytes list (most recent last).
+    """
+    with _lock:
+        buf = _image_buffers.get(session_id)
+        if not buf and _image_buffers:
+            # Fallback: use any available session
+            fallback_sid = next(iter(_image_buffers))
+            buf = _image_buffers.get(fallback_sid)
+        if not buf:
+            return []
+        # Return only the image bytes (not timestamps), most recent last
+        return [frame_bytes for _, frame_bytes in buf[-max_count:]]
+
+
+def clear_image_buffer(session_id: str) -> None:
+    """Clear the image buffer for a session (call between major phases)."""
+    with _lock:
+        _image_buffers.pop(session_id, None)
 
 
 def get_annotated_image(session_id: str) -> str | None:

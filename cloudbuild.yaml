@@ -1,0 +1,77 @@
+steps:
+  # Step 1: Build the Docker image
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "--build-arg"
+      - "VITE_GOOGLE_CLIENT_ID=${_VITE_GOOGLE_CLIENT_ID}"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/app:$COMMIT_SHA"
+      - "."
+
+  # Step 2: Push image to Artifact Registry
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/app:$COMMIT_SHA"
+
+  # Step 3: Deploy to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "deploy"
+      - "${_SERVICE_NAME}"
+      - "--image"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/app:$COMMIT_SHA"
+      - "--region"
+      - "${_REGION}"
+      - "--platform"
+      - "managed"
+      - "--allow-unauthenticated"
+      - "--port"
+      - "8080"
+      - "--min-instances"
+      - "0"
+      - "--max-instances"
+      - "1"
+      - "--memory"
+      - "1Gi"
+      - "--cpu"
+      - "1"
+      - "--timeout"
+      - "3600"
+      - "--session-affinity"
+      - "--set-env-vars"
+      - "GOOGLE_GENAI_USE_VERTEXAI=FALSE,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${_REGION},ENVIRONMENT=production"
+      - "--set-secrets"
+      - "JWT_SECRET=jwt-secret:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest,GOOGLE_API_KEY=google-api-key:latest"
+
+  # Step 4: Grant public (unauthenticated) access
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "services"
+      - "add-iam-policy-binding"
+      - "${_SERVICE_NAME}"
+      - "--region"
+      - "${_REGION}"
+      - "--member"
+      - "allUsers"
+      - "--role"
+      - "roles/run.invoker"
+
+# Substitution variables (can be overridden at trigger level)
+substitutions:
+  _SERVICE_NAME: gemyai
+  _REGION: us-central1
+  _REPO_NAME: gemyai
+  _VITE_GOOGLE_CLIENT_ID: "404117367631-089ihtupdrv4m542lfk8jrmo45lssjsh.apps.googleusercontent.com"
+
+# Use Artifact Registry for images
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/app:$COMMIT_SHA"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

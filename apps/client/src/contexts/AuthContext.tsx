@@ -51,7 +51,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: "Login failed" }));
-      console.error("[Auth] Login failed", { status: res.status, statusText: res.statusText, body: err });
+      console.error("[Auth] Login failed", {
+        status: res.status,
+        statusText: res.statusText,
+        body: err,
+      });
       throw new Error(err.detail || err.error || "Login failed");
     }
     const data = await res.json();

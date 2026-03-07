@@ -1,19 +1,21 @@
-"""Field-service sub-agent tools.
+"""Field-service workflow tools.
 
-Each tool wraps a call to gemini-3-flash-preview via genai.Client,
-following the same pattern as visual_grounding.annotate_image.
+Lightweight signal tools used by sub-agents to communicate completion,
+exit, or escalation back to the root coordinator.
 """
 
-from .diagnoser import start_diagnosis, submit_diagnosis_answer
-from .planner import create_fix_plan
-from .replanner import replan_fix
-from .step_tracker import get_current_step, report_step_result
+from .workflow_tools import (
+    complete_intake,
+    complete_diagnosis,
+    complete_repair,
+    exit_conversation,
+    escalate_to_root,
+)
 
 __all__ = [
-    "start_diagnosis",
-    "submit_diagnosis_answer",
-    "create_fix_plan",
-    "replan_fix",
-    "get_current_step",
-    "report_step_result",
+    "complete_intake",
+    "complete_diagnosis",
+    "complete_repair",
+    "exit_conversation",
+    "escalate_to_root",
 ]

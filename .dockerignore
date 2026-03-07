@@ -1,0 +1,52 @@
+# Version control
+.git
+.gitignore
+
+# Node
+node_modules/
+.pnpm-store/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+apps/server/app/.env
+apps/server/app/gemy-ai-firebase-adminsdk-*.json
+
+# IDE
+.vscode/
+.idea/
+
+# Turbo cache
+.turbo/
+
+# Build artifacts (rebuilt in Docker)
+apps/server/app/static/
+apps/client/dist/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# macOS
+.DS_Store
+
+# Misc
+*.wav
+*.mp3
+*.ogg
+*.pcm
+README.md
+all-docs.md
+assets/

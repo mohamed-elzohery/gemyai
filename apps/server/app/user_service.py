@@ -1,5 +1,6 @@
 """Firestore-backed user service — get or create user on Google sign-in."""
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -23,13 +24,22 @@ def _init_firebase() -> None:
     if _FIREBASE_APP is not None:
         return
 
+    # Support inline JSON from Secret Manager (FIREBASE_SERVICE_ACCOUNT_JSON env var)
+    sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "")
     sa_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "")
-    logger.info("[Firebase] Initialising with service account path: %r", sa_path)
 
-    if sa_path:
+    if sa_json:
+        logger.info(
+            "[Firebase] Initialising from FIREBASE_SERVICE_ACCOUNT_JSON env var"
+        )
+        sa_info = json.loads(sa_json)
+        cred = credentials.Certificate(sa_info)
+    elif sa_path:
         # Resolve relative paths against the directory containing this file
         resolved = Path(__file__).parent / sa_path
-        logger.info("[Firebase] Resolved path: %s (exists=%s)", resolved, resolved.exists())
+        logger.info(
+            "[Firebase] Resolved path: %s (exists=%s)", resolved, resolved.exists()
+        )
         if resolved.exists():
             cred = credentials.Certificate(str(resolved))
         else:
@@ -42,7 +52,9 @@ def _init_firebase() -> None:
                     f"Firebase service account file not found at {resolved} or {sa_path}"
                 )
     else:
-        logger.info("[Firebase] No service account path set, using Application Default Credentials")
+        logger.info(
+            "[Firebase] No service account path set, using Application Default Credentials"
+        )
         cred = credentials.ApplicationDefault()
 
     _FIREBASE_APP = firebase_admin.initialize_app(cred)

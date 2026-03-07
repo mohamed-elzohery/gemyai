@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import warnings
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.artifacts import InMemoryArtifactService
 from google.genai import types
+from websockets.exceptions import ConnectionClosedError as _WSClosedError
 
 # Load environment variables from .env file BEFORE importing agent
 load_dotenv(Path(__file__).parent / ".env")
@@ -60,27 +62,74 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 # Application name constant
 APP_NAME = "bidi-demo"
 
-# Internal tool names used by the field-service agent
+# Internal tool names used by the field-service agents
 _INTERNAL_TOOLS = {
+    # Workflow signal tools (sub-agent → root)
+    "complete_intake",
+    "complete_diagnosis",
+    "complete_repair",
+    "exit_conversation",
+    "escalate_to_root",
+    # Shared capability tools
     "annotate_image",
-    "start_diagnosis",
-    "submit_diagnosis_answer",
-    "create_fix_plan",
-    "replan_fix",
-    "get_current_step",
-    "report_step_result",
     "google_search",
+    # ADK internal routing
+    "transfer_to_agent",
 }
 
 _TOOL_STATUS_MESSAGES = {
     "annotate_image": "Pointing to the parts...",
-    "start_diagnosis": "Starting diagnosis...",
-    "submit_diagnosis_answer": "Processing your answer...",
-    "create_fix_plan": "Creating a repair plan...",
-    "replan_fix": "Adjusting the plan...",
-    "get_current_step": "Loading the next step...",
-    "report_step_result": "Recording step result...",
     "google_search": "Searching the web...",
+    "complete_intake": "Processing your information...",
+    "complete_diagnosis": "Finalizing diagnosis...",
+    "complete_repair": "Wrapping up...",
+}
+
+# Workflow signal tools that trigger phase transitions via escalation.
+# When one of these fires AND turnComplete arrives, we inject a
+# continuation prompt so the root agent wakes up and routes to the
+# next sub-agent without waiting for user input.
+_WORKFLOW_SIGNAL_TOOLS = {
+    "complete_intake",
+    "complete_diagnosis",
+    "complete_repair",
+    "escalate_to_root",
+}
+
+_CONTINUATION_PROMPTS: dict[str, str] = {
+    "complete_intake": (
+        "The user's issue has been documented. " "Proceed to the diagnosis phase now."
+    ),
+    "complete_diagnosis": (
+        "The diagnosis is complete. " "Proceed to the repair planning phase now."
+    ),
+    "complete_repair": (
+        "The repair is finished. "
+        "Summarise what was accomplished and ask the user if there is "
+        "anything else they need help with."
+    ),
+    "escalate_to_root": (
+        "A problem was encountered. "
+        "Continue the conversation based on the current context."
+    ),
+}
+
+# Recovery prompts used after transparent session reconnection (1011 retry).
+# These orient the model so it picks up the current phase naturally
+# without greeting or re-introducing itself.
+_RECOVERY_PROMPTS: dict[str, str] = {
+    "intake": (
+        "Continue collecting information about the equipment problem. "
+        "Do not greet or re-introduce yourself."
+    ),
+    "diagnosis": (
+        "Continue diagnosing the equipment problem. "
+        "Do not greet or re-introduce yourself."
+    ),
+    "planning": (
+        "Continue with the repair steps. " "Do not greet or re-introduce yourself."
+    ),
+    "completed": "Is there anything else you need help with?",
 }
 
 
@@ -96,9 +145,19 @@ def _is_thinking_text(text: str) -> bool:
     # Bold-markdown headers (e.g. "**Acknowledging New Method**")
     if stripped.startswith("**") and "**" in stripped[2:]:
         return True
-    # References to internal tool names in planning context
+    # References to internal tool names or agent names in planning context
     for tool_name in _INTERNAL_TOOLS:
         if tool_name in text:
+            return True
+    # Agent names that should never appear in user-facing text
+    _AGENT_NAMES = [
+        "intake_agent",
+        "diagnoser_agent",
+        "planner_agent",
+        "field_service_agent",
+    ]
+    for agent_name in _AGENT_NAMES:
+        if agent_name in text:
             return True
     # Common reasoning phrases that should not be shown to user
     _REASONING_MARKERS = [
@@ -113,6 +172,9 @@ def _is_thinking_text(text: str) -> bool:
         "i've acknowledged",
         "i should now",
         "the next action is",
+        "transfer to",
+        "transferring to",
+        "escalating to",
     ]
     lower = text.lower()
     for marker in _REASONING_MARKERS:
@@ -191,7 +253,11 @@ async def auth_google(request: Request):
         )
     except Exception as db_exc:
         # Log the real error but fall back to token data so login still works
-        logger.error("Firestore user upsert failed (using token data as fallback): %s", db_exc, exc_info=True)
+        logger.error(
+            "Firestore user upsert failed (using token data as fallback): %s",
+            db_exc,
+            exc_info=True,
+        )
         user = {
             "google_id": idinfo["sub"],
             "email": idinfo.get("email", ""),
@@ -217,12 +283,13 @@ async def auth_google(request: Request):
             }
         }
     )
+    is_production = os.getenv("ENVIRONMENT", "").lower() == "production"
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=False,  # Set True in production with HTTPS
-        samesite="lax",
+        secure=is_production,
+        samesite="none" if is_production else "lax",
         max_age=JWT_EXPIRY_DAYS * 86400,
         path="/",
     )
@@ -367,12 +434,14 @@ async def websocket_endpoint(
             session_id=session_id,
             state={
                 "phase": "intake",
-                "problem_image_count": 0,
-                "step_results": "{}",
-                "diagnosis_history": "[]",
-                "diagnosis_status": "not_started",
-                "current_diagnosis_question": "",
                 "ws_session_id": session_id,
+                # Sub-agent outputs (populated as workflow progresses)
+                "symptoms_report": "",
+                "diagnose_report": "",
+                "fix_report": "",
+                # Control signals
+                "escalation_reason": "",
+                "exit_reason": "",
             },
         )
     else:
@@ -464,14 +533,101 @@ async def websocket_endpoint(
                         "[Upstream] ▲ unknown json type: %s", json_message.get("type")
                     )
 
+    # ----- Retry wrapper for Gemini Live connection -----
+    _MAX_LIVE_RETRIES = 3
+
+    async def _live_event_stream():
+        """Yield events from run_live, retrying on transient Gemini errors.
+
+        The Gemini native-audio preview model occasionally crashes with
+        a 1011 (internal error) or 1008 (policy violation) WebSocket
+        close — typically mid-conversation during extended sessions.
+        This wrapper catches the error, notifies the client, waits
+        briefly, injects a recovery prompt, and restarts run_live().
+        """
+        _RETRYABLE_CODES = {1008, 1011}
+        for attempt in range(_MAX_LIVE_RETRIES + 1):
+            try:
+                async for event in runner.run_live(
+                    user_id=user_id,
+                    session_id=session_id,
+                    live_request_queue=live_request_queue,
+                    run_config=run_config,
+                ):
+                    yield event
+                return  # generator completed normally
+            except (_WSClosedError, ValueError) as exc:
+                code = None
+                if isinstance(exc, _WSClosedError):
+                    rcvd = getattr(exc, "rcvd", None)
+                    code = rcvd.code if rcvd else None
+                is_retryable = (
+                    code in _RETRYABLE_CODES
+                    if code is not None
+                    else "not implemented" in str(exc).lower()
+                    or "not supported" in str(exc).lower()
+                )
+                if is_retryable and attempt < _MAX_LIVE_RETRIES:
+                    logger.warning(
+                        "[Retry] Gemini connection error (code=%s) — "
+                        "reconnecting (attempt %d/%d)",
+                        code,
+                        attempt + 1,
+                        _MAX_LIVE_RETRIES,
+                    )
+                    # Notify the client (best-effort; their WS may be gone)
+                    try:
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "agent_status",
+                                    "tool": "reconnect",
+                                    "message": "Brief connection hiccup — reconnecting…",
+                                }
+                            )
+                        )
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1.0)
+                    # Inject a phase-aware recovery prompt so the model
+                    # continues naturally instead of re-greeting.
+                    sess = await session_service.get_session(
+                        app_name=APP_NAME,
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                    phase = sess.state.get("phase", "intake") if sess else "intake"
+                    recovery = _RECOVERY_PROMPTS.get(
+                        phase,
+                        "Continue helping with the current task.",
+                    )
+                    live_request_queue.send_content(
+                        types.Content(
+                            parts=[types.Part(text=recovery)],
+                            role="user",
+                        )
+                    )
+                    continue  # retry run_live
+                raise  # non-retryable — propagate
+
     async def downstream_task() -> None:
         """Receives Events from run_live() and sends to WebSocket."""
-        async for event in runner.run_live(
-            user_id=user_id,
-            session_id=session_id,
-            live_request_queue=live_request_queue,
-            run_config=run_config,
-        ):
+        # Track pending phase-transition so we can inject a continuation
+        # prompt once the current turn completes (fixes dead conversation
+        # after sub-agent escalation).
+        pending_signal: str | None = None
+
+        # Track the last finished output transcription to detect cases
+        # where the agent verbally announces a transition but forgets to
+        # call the required tool (common with native audio models).
+        last_output_transcript: str = ""
+
+        # Guard against infinite nudge loops — allow at most 2 nudges
+        # before giving up and letting the agent continue naturally.
+        nudge_count: int = 0
+        _MAX_NUDGES = 2
+
+        async for event in _live_event_stream():
             event_json = event.model_dump_json(exclude_none=True, by_alias=True)
 
             skip_event = False
@@ -527,6 +683,15 @@ async def websocket_endpoint(
                                 }
                             )
                         )
+
+                        # Track workflow signal tools so we can inject a
+                        # continuation prompt after turnComplete.
+                        if tool_resp_name in _WORKFLOW_SIGNAL_TOOLS:
+                            pending_signal = tool_resp_name
+                            logger.info(
+                                "[Continuation] Flagged pending signal: %s",
+                                tool_resp_name,
+                            )
 
                         # Deliver annotated image immediately on annotate_image response
                         if tool_resp_name == "annotate_image":
@@ -620,6 +785,78 @@ async def websocket_endpoint(
                 except Exception:
                     logger.info("[Downstream] ▼ (raw event)")
                 await websocket.send_text(event_json)
+
+            # --- 5. Post-escalation continuation prompt ---
+            # After a workflow signal tool fires and the current turn
+            # completes, the root agent is idle with no user input.
+            # Inject a continuation prompt so it wakes up and routes
+            # to the next sub-agent seamlessly.
+            if event.turn_complete and pending_signal:
+                prompt_text = _CONTINUATION_PROMPTS.get(
+                    pending_signal,
+                    "Continue the conversation based on the current context.",
+                )
+                logger.info(
+                    "[Continuation] turnComplete after %s — injecting prompt",
+                    pending_signal,
+                )
+                pending_signal = None  # reset before sending
+                last_output_transcript = ""  # reset transcript
+                live_request_queue.send_content(
+                    types.Content(
+                        parts=[types.Part(text=prompt_text)],
+                        role="user",
+                    )
+                )
+
+            # --- 6. Capture finished output transcription ---
+            if (
+                event.output_transcription
+                and event.output_transcription.finished
+                and event.output_transcription.text
+            ):
+                last_output_transcript = event.output_transcription.text
+
+            # --- 7. Fallback nudge: agent spoke a transition but forgot tool ---
+            # Native audio models sometimes verbally announce transitions
+            # (e.g. "Let me start the diagnosis") without actually calling
+            # the required workflow/transfer tool. Detect this and nudge.
+            if (
+                event.turn_complete
+                and not pending_signal
+                and last_output_transcript
+                and nudge_count < _MAX_NUDGES
+            ):
+                _lower = last_output_transcript.lower()
+                _TRANSITION_PHRASES = [
+                    "start the diagnosis",
+                    "begin the diagnosis",
+                    "look into what",
+                    "let me look into",
+                    "enough information",
+                    "have a good picture",
+                    "clear picture",
+                    "repair plan",
+                    "put together a plan",
+                ]
+                spoke_transition = any(p in _lower for p in _TRANSITION_PHRASES)
+                if spoke_transition:
+                    nudge_count += 1
+                    logger.warning(
+                        "[Fallback] Agent spoke transition ('%s') without "
+                        "calling a tool — nudge %d/%d",
+                        last_output_transcript[:80],
+                        nudge_count,
+                        _MAX_NUDGES,
+                    )
+                    nudge = "OK, please proceed with the next step now."
+                    last_output_transcript = ""  # prevent re-firing
+                    live_request_queue.send_content(
+                        types.Content(
+                            parts=[types.Part(text=nudge)],
+                            role="user",
+                        )
+                    )
 
     async def image_delivery_task() -> None:
         """Polls for annotated images and sends them to the client.

@@ -37,7 +37,9 @@ def verify_google_token(token: str) -> dict:
         logger.error("GOOGLE_OAUTH_CLIENT_ID is not set in environment")
         raise HTTPException(status_code=500, detail="OAuth not configured")
 
-    logger.info("Verifying Google token against client_id=...%s", GOOGLE_OAUTH_CLIENT_ID[-12:])
+    logger.info(
+        "Verifying Google token against client_id=...%s", GOOGLE_OAUTH_CLIENT_ID[-12:]
+    )
     try:
         idinfo = google_id_token.verify_oauth2_token(
             token,
@@ -51,7 +53,9 @@ def verify_google_token(token: str) -> dict:
         return idinfo
     except Exception as exc:
         logger.warning("Google token verification failed: %s", exc)
-        raise HTTPException(status_code=401, detail=f"Invalid Google token: {exc}") from exc
+        raise HTTPException(
+            status_code=401, detail=f"Invalid Google token: {exc}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
