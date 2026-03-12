@@ -50,8 +50,6 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 # Let visual-grounding logs through so we can trace the annotation pipeline
 logging.getLogger("field_service_agent.visual_grounding").setLevel(logging.DEBUG)
-# Let sub-agent tool logs through
-logging.getLogger("field_service_agent.tools").setLevel(logging.DEBUG)
 # Let auth / user-service logs through
 logging.getLogger("auth").setLevel(logging.INFO)
 logging.getLogger("user_service").setLevel(logging.INFO)
@@ -62,75 +60,22 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 # Application name constant
 APP_NAME = "bidi-demo"
 
-# Internal tool names used by the field-service agents
+# Tool names whose function_call / function_response events should be
+# intercepted (show status messages to client instead of raw ADK events).
 _INTERNAL_TOOLS = {
-    # Workflow signal tools (sub-agent → root)
-    "complete_intake",
-    "complete_diagnosis",
-    "complete_repair",
-    "exit_conversation",
-    "escalate_to_root",
-    # Shared capability tools
     "annotate_image",
     "google_search",
-    # ADK internal routing
-    "transfer_to_agent",
 }
 
 _TOOL_STATUS_MESSAGES = {
     "annotate_image": "Pointing to the parts...",
     "google_search": "Searching the web...",
-    "complete_intake": "Processing your information...",
-    "complete_diagnosis": "Finalizing diagnosis...",
-    "complete_repair": "Wrapping up...",
 }
 
-# Workflow signal tools that trigger phase transitions via escalation.
-# When one of these fires AND turnComplete arrives, we inject a
-# continuation prompt so the root agent wakes up and routes to the
-# next sub-agent without waiting for user input.
-_WORKFLOW_SIGNAL_TOOLS = {
-    "complete_intake",
-    "complete_diagnosis",
-    "complete_repair",
-    "escalate_to_root",
-}
-
-_CONTINUATION_PROMPTS: dict[str, str] = {
-    "complete_intake": (
-        "The user's issue has been documented. " "Proceed to the diagnosis phase now."
-    ),
-    "complete_diagnosis": (
-        "The diagnosis is complete. " "Proceed to the repair planning phase now."
-    ),
-    "complete_repair": (
-        "The repair is finished. "
-        "Summarise what was accomplished and ask the user if there is "
-        "anything else they need help with."
-    ),
-    "escalate_to_root": (
-        "A problem was encountered. "
-        "Continue the conversation based on the current context."
-    ),
-}
-
-# Recovery prompts used after transparent session reconnection (1011 retry).
-# These orient the model so it picks up the current phase naturally
-# without greeting or re-introducing itself.
-_RECOVERY_PROMPTS: dict[str, str] = {
-    "intake": (
-        "Continue collecting information about the equipment problem. "
-        "Do not greet or re-introduce yourself."
-    ),
-    "diagnosis": (
-        "Continue diagnosing the equipment problem. "
-        "Do not greet or re-introduce yourself."
-    ),
-    "planning": (
-        "Continue with the repair steps. " "Do not greet or re-introduce yourself."
-    ),
-    "completed": "Is there anything else you need help with?",
-}
+# Recovery prompt used after transparent session reconnection (1011 retry).
+_RECOVERY_PROMPT = (
+    "Continue helping with the current task. " "Do not greet or re-introduce yourself."
+)
 
 
 def _is_thinking_text(text: str) -> bool:
@@ -145,20 +90,6 @@ def _is_thinking_text(text: str) -> bool:
     # Bold-markdown headers (e.g. "**Acknowledging New Method**")
     if stripped.startswith("**") and "**" in stripped[2:]:
         return True
-    # References to internal tool names or agent names in planning context
-    for tool_name in _INTERNAL_TOOLS:
-        if tool_name in text:
-            return True
-    # Agent names that should never appear in user-facing text
-    _AGENT_NAMES = [
-        "intake_agent",
-        "diagnoser_agent",
-        "planner_agent",
-        "field_service_agent",
-    ]
-    for agent_name in _AGENT_NAMES:
-        if agent_name in text:
-            return True
     # Common reasoning phrases that should not be shown to user
     _REASONING_MARKERS = [
         "my next step is",
@@ -172,9 +103,6 @@ def _is_thinking_text(text: str) -> bool:
         "i've acknowledged",
         "i should now",
         "the next action is",
-        "transfer to",
-        "transferring to",
-        "escalating to",
     ]
     lower = text.lower()
     for marker in _REASONING_MARKERS:
@@ -424,25 +352,17 @@ async def websocket_endpoint(
     logger.debug(f"RunConfig created: {run_config}")
 
     # Get or create session (handles both new sessions and reconnections)
+    is_new_session = False
     session = await session_service.get_session(
         app_name=APP_NAME, user_id=user_id, session_id=session_id
     )
     if not session:
+        is_new_session = True
         session = await session_service.create_session(
             app_name=APP_NAME,
             user_id=user_id,
             session_id=session_id,
-            state={
-                "phase": "intake",
-                "ws_session_id": session_id,
-                # Sub-agent outputs (populated as workflow progresses)
-                "symptoms_report": "",
-                "diagnose_report": "",
-                "fix_report": "",
-                # Control signals
-                "escalation_reason": "",
-                "exit_reason": "",
-            },
+            state={"ws_session_id": session_id},
         )
     else:
         # Ensure ws_session_id is set for reconnections
@@ -450,27 +370,40 @@ async def websocket_endpoint(
     live_request_queue = LiveRequestQueue()
 
     # ========================================
-    # Phase 2b: Send welcome message & queue greeting prompt
+    # Phase 2b: Send welcome message (new sessions only)
     # ========================================
     _WELCOME_TEXT = (
         "Hey, I am Gemmy! I can help you fix your stuff. " "What do we have today?"
     )
-    await websocket.send_text(json.dumps({"type": "welcome", "text": _WELCOME_TEXT}))
-    logger.info("[Welcome] Sent welcome text to client")
 
-    # Queue a greeting prompt so the native-audio model speaks the welcome
-    live_request_queue.send_content(
-        types.Content(
-            parts=[
-                types.Part(
-                    text=(
-                        "The user just connected. Greet them warmly. "
-                        "Say exactly: " + _WELCOME_TEXT
-                    )
-                )
-            ]
+    if is_new_session:
+        await websocket.send_text(
+            json.dumps({"type": "welcome", "text": _WELCOME_TEXT})
         )
-    )
+        logger.info("[Welcome] Sent welcome text to client (new session)")
+
+        # Queue a greeting prompt so the native-audio model speaks the welcome
+        live_request_queue.send_content(
+            types.Content(
+                parts=[
+                    types.Part(
+                        text=(
+                            "The user just connected. Greet them warmly. "
+                            "Say exactly: " + _WELCOME_TEXT
+                        )
+                    )
+                ]
+            )
+        )
+    else:
+        logger.info("[Reconnect] Existing session restored — skipping welcome")
+        # Inject a recovery prompt so the model continues naturally
+        live_request_queue.send_content(
+            types.Content(
+                parts=[types.Part(text=_RECOVERY_PROMPT)],
+                role="user",
+            )
+        )
 
     # ========================================
     # Phase 3: Active Session (concurrent bidirectional communication)
@@ -589,21 +522,11 @@ async def websocket_endpoint(
                     except Exception:
                         pass
                     await asyncio.sleep(1.0)
-                    # Inject a phase-aware recovery prompt so the model
-                    # continues naturally instead of re-greeting.
-                    sess = await session_service.get_session(
-                        app_name=APP_NAME,
-                        user_id=user_id,
-                        session_id=session_id,
-                    )
-                    phase = sess.state.get("phase", "intake") if sess else "intake"
-                    recovery = _RECOVERY_PROMPTS.get(
-                        phase,
-                        "Continue helping with the current task.",
-                    )
+                    # Inject a recovery prompt so the model continues
+                    # naturally instead of re-greeting.
                     live_request_queue.send_content(
                         types.Content(
-                            parts=[types.Part(text=recovery)],
+                            parts=[types.Part(text=_RECOVERY_PROMPT)],
                             role="user",
                         )
                     )
@@ -612,20 +535,6 @@ async def websocket_endpoint(
 
     async def downstream_task() -> None:
         """Receives Events from run_live() and sends to WebSocket."""
-        # Track pending phase-transition so we can inject a continuation
-        # prompt once the current turn completes (fixes dead conversation
-        # after sub-agent escalation).
-        pending_signal: str | None = None
-
-        # Track the last finished output transcription to detect cases
-        # where the agent verbally announces a transition but forgets to
-        # call the required tool (common with native audio models).
-        last_output_transcript: str = ""
-
-        # Guard against infinite nudge loops — allow at most 2 nudges
-        # before giving up and letting the agent continue naturally.
-        nudge_count: int = 0
-        _MAX_NUDGES = 2
 
         async for event in _live_event_stream():
             event_json = event.model_dump_json(exclude_none=True, by_alias=True)
@@ -655,11 +564,6 @@ async def websocket_endpoint(
                             )
                         )
                         skip_event = True
-                        logger.info(
-                            "[Downstream] Skipped function_call for %s → status: '%s'",
-                            tool_name,
-                            status_msg,
-                        )
 
                     # --- 2. Intercept function_response events ---
                     if (
@@ -683,15 +587,6 @@ async def websocket_endpoint(
                                 }
                             )
                         )
-
-                        # Track workflow signal tools so we can inject a
-                        # continuation prompt after turnComplete.
-                        if tool_resp_name in _WORKFLOW_SIGNAL_TOOLS:
-                            pending_signal = tool_resp_name
-                            logger.info(
-                                "[Continuation] Flagged pending signal: %s",
-                                tool_resp_name,
-                            )
 
                         # Deliver annotated image immediately on annotate_image response
                         if tool_resp_name == "annotate_image":
@@ -785,78 +680,6 @@ async def websocket_endpoint(
                 except Exception:
                     logger.info("[Downstream] ▼ (raw event)")
                 await websocket.send_text(event_json)
-
-            # --- 5. Post-escalation continuation prompt ---
-            # After a workflow signal tool fires and the current turn
-            # completes, the root agent is idle with no user input.
-            # Inject a continuation prompt so it wakes up and routes
-            # to the next sub-agent seamlessly.
-            if event.turn_complete and pending_signal:
-                prompt_text = _CONTINUATION_PROMPTS.get(
-                    pending_signal,
-                    "Continue the conversation based on the current context.",
-                )
-                logger.info(
-                    "[Continuation] turnComplete after %s — injecting prompt",
-                    pending_signal,
-                )
-                pending_signal = None  # reset before sending
-                last_output_transcript = ""  # reset transcript
-                live_request_queue.send_content(
-                    types.Content(
-                        parts=[types.Part(text=prompt_text)],
-                        role="user",
-                    )
-                )
-
-            # --- 6. Capture finished output transcription ---
-            if (
-                event.output_transcription
-                and event.output_transcription.finished
-                and event.output_transcription.text
-            ):
-                last_output_transcript = event.output_transcription.text
-
-            # --- 7. Fallback nudge: agent spoke a transition but forgot tool ---
-            # Native audio models sometimes verbally announce transitions
-            # (e.g. "Let me start the diagnosis") without actually calling
-            # the required workflow/transfer tool. Detect this and nudge.
-            if (
-                event.turn_complete
-                and not pending_signal
-                and last_output_transcript
-                and nudge_count < _MAX_NUDGES
-            ):
-                _lower = last_output_transcript.lower()
-                _TRANSITION_PHRASES = [
-                    "start the diagnosis",
-                    "begin the diagnosis",
-                    "look into what",
-                    "let me look into",
-                    "enough information",
-                    "have a good picture",
-                    "clear picture",
-                    "repair plan",
-                    "put together a plan",
-                ]
-                spoke_transition = any(p in _lower for p in _TRANSITION_PHRASES)
-                if spoke_transition:
-                    nudge_count += 1
-                    logger.warning(
-                        "[Fallback] Agent spoke transition ('%s') without "
-                        "calling a tool — nudge %d/%d",
-                        last_output_transcript[:80],
-                        nudge_count,
-                        _MAX_NUDGES,
-                    )
-                    nudge = "OK, please proceed with the next step now."
-                    last_output_transcript = ""  # prevent re-firing
-                    live_request_queue.send_content(
-                        types.Content(
-                            parts=[types.Part(text=nudge)],
-                            role="user",
-                        )
-                    )
 
     async def image_delivery_task() -> None:
         """Polls for annotated images and sends them to the client.
