@@ -67,14 +67,10 @@ export default function SessionPage() {
   const agentStatusIdRef = useRef<string | null>(null);
   const groundingLoadingIdRef = useRef<string | null>(null);
 
-  // ---- Image streaming ----
+  // ---- Image streaming (continuous 1fps) ----
   const imageStreamIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
-  const speechSafetyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const MAX_SPEECH_DURATION_MS = 60000;
 
   // ---- Helpers to update messages by ID ----
   const addMessage = useCallback((msg: ChatMessage) => {
@@ -97,11 +93,10 @@ export default function SessionPage() {
   const audioRecorder = useAudioRecorder();
   const camera = useCamera();
 
-  // ---- Snapshot capture & send ----
+  // ---- Snapshot capture & send (continuous 1fps, independent of speech) ----
   const sendJsonRef = useRef<(data: unknown) => void>(() => {});
 
   const captureAndSendSnapshot = useCallback(() => {
-    if (!isSpeakingRef.current) return;
     const base64 = camera.captureSnapshot();
     if (!base64) return;
     sendJsonRef.current({
@@ -124,40 +119,10 @@ export default function SessionPage() {
     audioRecorder.resume();
 
     sendJsonRef.current({ type: "activity_start" });
-
-    // Capture first snapshot immediately
-    captureAndSendSnapshot();
-
-    // Periodic snapshots every 1s
-    if (imageStreamIntervalRef.current)
-      clearInterval(imageStreamIntervalRef.current);
-    imageStreamIntervalRef.current = setInterval(captureAndSendSnapshot, 1000);
-
-    // Safety timeout
-    if (speechSafetyTimeoutRef.current)
-      clearTimeout(speechSafetyTimeoutRef.current);
-    speechSafetyTimeoutRef.current = setTimeout(() => {
-      if (imageStreamIntervalRef.current) {
-        clearInterval(imageStreamIntervalRef.current);
-        imageStreamIntervalRef.current = null;
-      }
-    }, MAX_SPEECH_DURATION_MS);
-  }, [captureAndSendSnapshot, audioRecorder, audioPlayer]);
+  }, [audioRecorder, audioPlayer]);
 
   const handleSpeechEnd = useCallback(
     (_audio: Float32Array) => {
-      if (imageStreamIntervalRef.current) {
-        clearInterval(imageStreamIntervalRef.current);
-        imageStreamIntervalRef.current = null;
-      }
-      if (speechSafetyTimeoutRef.current) {
-        clearTimeout(speechSafetyTimeoutRef.current);
-        speechSafetyTimeoutRef.current = null;
-      }
-
-      // Final snapshot while still speaking
-      captureAndSendSnapshot();
-
       console.log("[VAD] Speech END");
       isSpeakingRef.current = false;
       setIsSpeaking(false);
@@ -167,7 +132,7 @@ export default function SessionPage() {
 
       sendJsonRef.current({ type: "activity_end" });
     },
-    [captureAndSendSnapshot, audioRecorder],
+    [audioRecorder],
   );
 
   const vadHook = useVAD({
@@ -536,12 +501,27 @@ export default function SessionPage() {
 
       isAudioRef.current = true;
       setSessionStarted(true);
+
+      // Start continuous 1fps camera frame streaming to the server
+      if (imageStreamIntervalRef.current)
+        clearInterval(imageStreamIntervalRef.current);
+      imageStreamIntervalRef.current = setInterval(
+        captureAndSendSnapshot,
+        1000,
+      );
     } catch (err: unknown) {
       const error = err as Error;
       console.error("Session start failed:", error.message);
       // Still mark session as started so user can retry
     }
-  }, [camera, audioPlayer, audioRecorder, audioRecorderHandler, vadHook]);
+  }, [
+    camera,
+    audioPlayer,
+    audioRecorder,
+    audioRecorderHandler,
+    vadHook,
+    captureAndSendSnapshot,
+  ]);
 
   // ---- End session ----
   const endSession = useCallback(() => {
@@ -612,6 +592,11 @@ export default function SessionPage() {
       camera.stop();
       setCameraOn(false);
       setPreviewVisible(false);
+      // Stop frame streaming while camera is off
+      if (imageStreamIntervalRef.current) {
+        clearInterval(imageStreamIntervalRef.current);
+        imageStreamIntervalRef.current = null;
+      }
     } else {
       const videoEl = document.getElementById(
         "cameraPreviewLive",
@@ -620,10 +605,17 @@ export default function SessionPage() {
         camera.init(videoEl).then(() => {
           setCameraOn(true);
           setPreviewVisible(true);
+          // Restart continuous 1fps frame streaming
+          if (imageStreamIntervalRef.current)
+            clearInterval(imageStreamIntervalRef.current);
+          imageStreamIntervalRef.current = setInterval(
+            captureAndSendSnapshot,
+            1000,
+          );
         });
       }
     }
-  }, [cameraOn, camera]);
+  }, [cameraOn, camera, captureAndSendSnapshot]);
 
   const handleToggleMic = useCallback(() => {
     setMicOn((prev) => !prev);

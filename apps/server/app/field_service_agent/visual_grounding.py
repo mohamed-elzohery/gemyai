@@ -2,6 +2,9 @@
 
 Uses gemini-3-flash-preview for bounding-box detection, then PIL to draw
 red ellipses on the original image so the user can see what was found.
+
+Image storage is handled by the shared ``frame_buffer`` module.  Annotated
+images are also persisted as ADK artifacts with metadata in session state.
 """
 
 import asyncio
@@ -10,109 +13,35 @@ import io
 import json
 import logging
 import os
-import threading
 import time
 from typing import Any
 
 from google import genai
 from google.adk.tools import ToolContext
+from google.genai import types
 from PIL import Image, ImageDraw
+
+from .frame_buffer import (
+    get_latest_frame,
+    store_annotated_image,
+    pop_annotated_image,
+)
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
-# Module-level image cache (keyed by session_id)
+# Public re-exports so main.py doesn't need to import frame_buffer directly
+# for annotated-image delivery.
 # ---------------------------------------------------------------------------
-_lock = threading.Lock()
-_latest_images: dict[str, bytes] = {}  # raw JPEG bytes per session
-_annotated_images: dict[str, str] = {}  # base64 result per session
-
-# Rolling image buffer — stores (timestamp, jpeg_bytes) tuples per session
-_IMAGE_BUFFER_MAX = 10
-_image_buffers: dict[str, list[tuple[float, bytes]]] = {}
-
-
-def store_latest_image(session_id: str, image_bytes: bytes) -> None:
-    """Cache the most recent camera frame for a session.
-
-    Also appends to the rolling image buffer (max 10 frames, FIFO).
-    """
-    with _lock:
-        _latest_images[session_id] = image_bytes
-
-        # Append to rolling buffer
-        buf = _image_buffers.setdefault(session_id, [])
-        buf.append((time.time(), image_bytes))
-        # Trim to max size
-        if len(buf) > _IMAGE_BUFFER_MAX:
-            _image_buffers[session_id] = buf[-_IMAGE_BUFFER_MAX:]
-
-
-def get_image_buffer(session_id: str, max_count: int = 5) -> list[bytes]:
-    """Return the most recent N frames from the rolling buffer.
-
-    Falls back to any available session if the exact ID is not found.
-    Returns raw JPEG bytes list (most recent last).
-    """
-    with _lock:
-        buf = _image_buffers.get(session_id)
-        if not buf and _image_buffers:
-            # Fallback: use any available session
-            fallback_sid = next(iter(_image_buffers))
-            buf = _image_buffers.get(fallback_sid)
-        if not buf:
-            return []
-        # Return only the image bytes (not timestamps), most recent last
-        return [frame_bytes for _, frame_bytes in buf[-max_count:]]
-
-
-def clear_image_buffer(session_id: str) -> None:
-    """Clear the image buffer for a session (call between major phases)."""
-    with _lock:
-        _image_buffers.pop(session_id, None)
 
 
 def get_annotated_image(session_id: str) -> str | None:
-    """Pop and return the latest annotated image (base64 JPEG), if any."""
-    with _lock:
-        # Try exact session_id first
-        result = _annotated_images.pop(session_id, None)
-        if result:
-            logger.info(
-                "[Annotation] Retrieved annotated image for session %s", session_id
-            )
-            return result
-        # Fallback: grab any available annotated image (handles session ID mismatches)
-        if _annotated_images:
-            fallback_sid, result = _annotated_images.popitem()
-            logger.info(
-                "[Annotation] Session ID mismatch — requested %s, found under %s",
-                session_id,
-                fallback_sid,
-            )
-            return result
-        return None
+    """Pop and return the latest annotated image (base64 JPEG), if any.
 
-
-def get_latest_image(session_id: str) -> bytes | None:
-    """Return the most recent camera frame for a session (non-destructive).
-
-    Falls back to any available session if the exact ID is not found.
+    Delegates to ``frame_buffer.pop_annotated_image``.
     """
-    with _lock:
-        image_bytes = _latest_images.get(session_id)
-        if image_bytes:
-            return image_bytes
-        # Fallback: use any available image (handles session ID mismatch)
-        if _latest_images:
-            fallback_sid = next(iter(_latest_images))
-            logger.info(
-                "[ImageCache] Session ID mismatch — requested %s, using frame from %s",
-                session_id,
-                fallback_sid,
-            )
-            return _latest_images[fallback_sid]
-        return None
+    return pop_annotated_image(session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -218,10 +147,9 @@ async def annotate_image(query: str, tool_context: ToolContext) -> dict[str, str
     logger.info(
         "[Annotation] annotate_image called: query=%r, session=%s", query, session_id
     )
-    logger.info("[Annotation] _latest_images keys: %s", list(_latest_images.keys()))
 
-    # 1. Grab the latest camera frame
-    image_bytes = get_latest_image(session_id)
+    # 1. Grab the latest camera frame from the shared buffer
+    image_bytes = get_latest_frame(session_id)
 
     if not image_bytes:
         logger.warning(
@@ -354,15 +282,46 @@ async def annotate_image(query: str, tool_context: ToolContext) -> dict[str, str
 
     # 4. Store the annotated image for the delivery task to pick up
     annotated_b64 = base64.b64encode(annotated_bytes).decode("ascii")
-    with _lock:
-        _annotated_images[session_id] = annotated_b64
+    store_annotated_image(session_id, annotated_b64)
     logger.info(
         "[Annotation] Stored annotated image (%d chars b64) under session %s",
         len(annotated_b64),
         session_id,
     )
 
+    # 5. Persist the annotated image as an ADK artifact + session metadata
     labels = [d.get("label", "region") for d in detections]
+    try:
+        ts = time.time()
+        artifact_name = f"annotated_{int(ts * 1000)}.jpg"
+        artifact_part = types.Part.from_bytes(
+            data=annotated_bytes, mime_type="image/jpeg"
+        )
+        version = await tool_context.save_artifact(artifact_name, artifact_part)
+        logger.info(
+            "[Annotation] Saved artifact %s (version %d)", artifact_name, version
+        )
+
+        processed_frames: list = tool_context.state.get("processed_frames", [])
+        processed_frames.append(
+            {
+                "artifact_name": artifact_name,
+                "version": version,
+                "timestamp": ts,
+                "context": query[:500],
+                "findings": f"Annotated {len(detections)} region(s): {', '.join(labels)}",
+                "relevance": "high",
+                "type": "annotated_frame",
+                "labels": labels,
+            }
+        )
+        tool_context.state["processed_frames"] = processed_frames
+    except Exception as e:
+        # Non-fatal — the annotated image is still delivered to the client
+        logger.error(
+            "[Annotation] Artifact/state persistence failed: %s", e, exc_info=True
+        )
+
     return {
         "status": "success",
         "description": (

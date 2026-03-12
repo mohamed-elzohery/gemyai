@@ -26,10 +26,8 @@ load_dotenv(Path(__file__).parent / ".env")
 # Import agent after loading environment variables
 # pylint: disable=wrong-import-position
 from field_service_agent.agent import agent  # noqa: E402
-from field_service_agent.visual_grounding import (  # noqa: E402
-    get_annotated_image,
-    store_latest_image,
-)
+from field_service_agent.visual_grounding import get_annotated_image  # noqa: E402
+from field_service_agent.frame_buffer import store_frame  # noqa: E402
 from auth import (  # noqa: E402
     verify_google_token,
     create_jwt,
@@ -50,6 +48,9 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 # Let visual-grounding logs through so we can trace the annotation pipeline
 logging.getLogger("field_service_agent.visual_grounding").setLevel(logging.DEBUG)
+# Let frame-buffer and frame-analyzer logs through
+logging.getLogger("field_service_agent.frame_buffer").setLevel(logging.DEBUG)
+logging.getLogger("field_service_agent.frame_analyzer").setLevel(logging.DEBUG)
 # Let auth / user-service logs through
 logging.getLogger("auth").setLevel(logging.INFO)
 logging.getLogger("user_service").setLevel(logging.INFO)
@@ -64,11 +65,13 @@ APP_NAME = "bidi-demo"
 # intercepted (show status messages to client instead of raw ADK events).
 _INTERNAL_TOOLS = {
     "annotate_image",
+    "capture_frame",
     "google_search",
 }
 
 _TOOL_STATUS_MESSAGES = {
     "annotate_image": "Pointing to the parts...",
+    "capture_frame": "Analyzing the camera feed...",
     "google_search": "Searching the web...",
 }
 
@@ -445,21 +448,20 @@ async def websocket_endpoint(
                     )
                     live_request_queue.send_content(content)
 
-                # Handle image data
+                # Handle image data — buffer only, do NOT send to model
                 elif json_message.get("type") == "image":
                     # Decode base64 image data
                     image_data = base64.b64decode(json_message["data"])
                     mime_type = json_message.get("mimeType", "image/jpeg")
-                    logger.info(
-                        "[Upstream] ▲ image (%s, %d bytes)", mime_type, len(image_data)
+                    logger.debug(
+                        "[Upstream] ▲ image (%s, %d bytes) → buffer",
+                        mime_type,
+                        len(image_data),
                     )
 
-                    # Cache the latest camera frame for visual grounding
-                    store_latest_image(session_id, image_data)
-
-                    # Send image as blob
-                    image_blob = types.Blob(mime_type=mime_type, data=image_data)
-                    live_request_queue.send_realtime(image_blob)
+                    # Store in the shared frame buffer (used by
+                    # capture_frame / annotate_image tools on demand)
+                    store_frame(session_id, image_data)
 
                 else:
                     logger.info(
