@@ -105,11 +105,13 @@ DEMO_AGENT_MODEL=gemini-2.5-flash-native-audio-preview-12-2025
 #### Getting API Credentials
 
 **Gemini Live API:**
+
 1. Visit [Google AI Studio](https://aistudio.google.com/apikey)
 2. Create an API key
 3. Set `GOOGLE_API_KEY` in `.env`
 
 **Vertex AI Live API:**
+
 1. Enable Vertex AI API in [Google Cloud Console](https://console.cloud.google.com)
 2. Set up authentication using `gcloud auth application-default login`
 3. Set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` in `.env`
@@ -210,17 +212,20 @@ ws://localhost:8000/ws/{user_id}/{session_id}
 ```
 
 **Path Parameters:**
+
 - `user_id`: Unique identifier for the user
 - `session_id`: Unique identifier for the session
 
 **Response Modality:**
+
 - Automatically determined based on model architecture
 - Native audio models use AUDIO response modality
-- Half-cascade models use TEXT response modality
+- Half-cascade models use AUDIO response modality with TTS-based voice output
 
 ### Message Format
 
 **Client → Server (Text):**
+
 ```json
 {
   "type": "text",
@@ -229,6 +234,7 @@ ws://localhost:8000/ws/{user_id}/{session_id}
 ```
 
 **Client → Server (Image):**
+
 ```json
 {
   "type": "image",
@@ -238,9 +244,11 @@ ws://localhost:8000/ws/{user_id}/{session_id}
 ```
 
 **Client → Server (Audio):**
+
 - Send raw binary frames (PCM audio, 16kHz, 16-bit)
 
 **Server → Client:**
+
 - JSON-encoded ADK `Event` objects
 - See [ADK Events Documentation](https://google.github.io/adk-docs/) for event schemas
 
@@ -307,11 +315,13 @@ The WebSocket endpoint implements the complete bidirectional streaming pattern:
 ### Concurrent Tasks
 
 **Upstream Task** (app/main.py:125-172):
+
 - Receives WebSocket messages (text, image, or audio binary)
 - Converts to ADK format (`Content` or `Blob`)
 - Sends to `LiveRequestQueue` via `send_content()` or `send_realtime()`
 
 **Downstream Task** (app/main.py:174-187):
+
 - Calls `runner.run_live()` with queue and config
 - Receives `Event` stream from Live API
 - Serializes events to JSON and sends to WebSocket
@@ -323,12 +333,14 @@ The WebSocket endpoint implements the complete bidirectional streaming pattern:
 The demo supports any Gemini model compatible with Live API:
 
 **Native Audio Models** (recommended for voice):
+
 - `gemini-2.5-flash-native-audio-preview-12-2025` (Gemini Live API)
 - `gemini-live-2.5-flash-native-audio` (Vertex AI)
 
 Set the model via `DEMO_AGENT_MODEL` in `.env` or modify `app/google_search_agent/agent.py`.
 
 For the latest model availability and features:
+
 - **Gemini Live API**: Check the [official Gemini API models documentation](https://ai.google.dev/gemini-api/docs/models)
 - **Vertex AI Live API**: Check the [official Vertex AI models documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models)
 
@@ -337,6 +349,7 @@ For the latest model availability and features:
 The demo automatically configures bidirectional streaming based on model architecture (app/main.py:76-104):
 
 **For Native Audio Models** (containing "native-audio" in model name):
+
 ```python
 run_config = RunConfig(
     streaming_mode=StreamingMode.BIDI,
@@ -348,6 +361,7 @@ run_config = RunConfig(
 ```
 
 **For Half-Cascade Models** (other models):
+
 ```python
 run_config = RunConfig(
     streaming_mode=StreamingMode.BIDI,
@@ -367,6 +381,7 @@ The modality detection is automatic based on the model name. Native audio models
 **Problem**: WebSocket fails to connect
 
 **Solutions**:
+
 - Verify API credentials in `app/.env`
 - Check console for error messages
 - Ensure uvicorn is running on correct port
@@ -376,6 +391,7 @@ The modality detection is automatic based on the model name. Native audio models
 **Problem**: Audio input/output not functioning
 
 **Solutions**:
+
 - Grant microphone permissions in browser
 - Verify browser supports Web Audio API
 - Check that audio model is configured (native audio model required)
@@ -386,6 +402,7 @@ The modality detection is automatic based on the model name. Native audio models
 **Problem**: "Model not found" or quota errors
 
 **Solutions**:
+
 - Verify model name matches your platform (Gemini vs Vertex AI)
 - Check API quota limits in console
 - Ensure billing is enabled (for Vertex AI)

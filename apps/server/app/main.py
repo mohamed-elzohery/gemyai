@@ -696,10 +696,78 @@ async def websocket_endpoint(
                     logger.info("[Downstream] ▼ (raw event)")
                 await websocket.send_text(event_json)
 
-    # Run both tasks concurrently
-    # Exceptions from either task will propagate and cancel the other task
+    # ------------------------------------------------------------------
+    # Delivery task — polls for annotated images & PDF reports that
+    # were produced by ADK tools.  With native-audio bidi streaming
+    # the ADK runner executes tools internally and does NOT yield
+    # function_call / function_response events in the downstream
+    # stream, so the in-line delivery code inside downstream_task
+    # never triggers.  This independent task closes that gap.
+    # ------------------------------------------------------------------
+    _DELIVERY_POLL_INTERVAL = 0.3  # seconds
+
+    async def delivery_task() -> None:
+        """Periodically deliver annotated images & reports to the client."""
+        while True:
+            await asyncio.sleep(_DELIVERY_POLL_INTERVAL)
+
+            # --- Annotated image ---
+            annotated_b64 = get_annotated_image(session_id)
+            if annotated_b64:
+                logger.info(
+                    "[Delivery] Sending annotated image to client "
+                    "(%d chars b64, session %s)",
+                    len(annotated_b64),
+                    session_id,
+                )
+                try:
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "grounding_result",
+                                "image": annotated_b64,
+                                "mimeType": "image/jpeg",
+                            }
+                        )
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "[Delivery] Failed to send annotated image: %s", exc
+                    )
+
+            # --- PDF report ---
+            report_pdf = pop_pending_report(session_id)
+            if report_pdf:
+                logger.info(
+                    "[Delivery] Sending PDF report to client "
+                    "(%d bytes, session %s)",
+                    len(report_pdf),
+                    session_id,
+                )
+                try:
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "report_ready",
+                                "data": base64.b64encode(report_pdf).decode(
+                                    "ascii"
+                                ),
+                                "mimeType": "application/pdf",
+                                "filename": "fix_report.pdf",
+                            }
+                        )
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "[Delivery] Failed to send PDF report: %s", exc
+                    )
+
+    # Run all three tasks concurrently
+    # Exceptions from any task will propagate and cancel the others
     try:
-        await asyncio.gather(upstream_task(), downstream_task())
+        await asyncio.gather(
+            upstream_task(), downstream_task(), delivery_task()
+        )
     except WebSocketDisconnect:
         logger.debug("Client disconnected normally")
     except Exception as e:
