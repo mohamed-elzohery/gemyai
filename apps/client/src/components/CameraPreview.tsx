@@ -111,7 +111,11 @@ export default function CameraPreview({ visible }: CameraPreviewProps) {
         }}
       >
         <Typography
-          sx={{ fontSize: "0.75rem", fontWeight: 500, color: "rgba(255,255,255,0.35)" }}
+          sx={{
+            fontSize: "0.75rem",
+            fontWeight: 500,
+            color: "rgba(255,255,255,0.35)",
+          }}
         >
           Camera unavailable
         </Typography>

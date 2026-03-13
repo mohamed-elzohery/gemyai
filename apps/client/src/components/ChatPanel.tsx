@@ -41,7 +41,13 @@ export default function ChatPanel({ open, onClose }: ChatPanelProps) {
           <IconButton
             onClick={onClose}
             aria-label="Close chat"
-            sx={{ ...iconBtnSmSx, width: 36, height: 36, minWidth: 36, minHeight: 36 }}
+            sx={{
+              ...iconBtnSmSx,
+              width: 36,
+              height: 36,
+              minWidth: 36,
+              minHeight: 36,
+            }}
           >
             <ArrowBackIcon sx={{ width: 18, height: 18 }} />
           </IconButton>

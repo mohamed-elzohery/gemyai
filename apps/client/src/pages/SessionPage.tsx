@@ -626,7 +626,9 @@ export default function SessionPage() {
     // Safety fallback — start anyway after 2 s even if video not found
     const fallback = setTimeout(() => {
       if (!cancelled) {
-        console.warn("[Session] Fallback: starting session without waiting for video element");
+        console.warn(
+          "[Session] Fallback: starting session without waiting for video element",
+        );
         startSession();
       }
     }, 2000);
@@ -750,12 +752,7 @@ export default function SessionPage() {
         : "",
       "",
     );
-  }, [
-    finalResponse.mode,
-    finalResponse.text,
-    isSpeaking,
-    messages.length,
-  ]);
+  }, [finalResponse.mode, finalResponse.text, isSpeaking, messages.length]);
 
   const showCameraPreview = cameraOn && previewVisible;
 
@@ -805,7 +802,7 @@ export default function SessionPage() {
           height: { xs: "100%", sm: 852, lg: "100%" },
           maxHeight: { xs: "100%", sm: 852, lg: "100%" },
           borderRadius: { xs: 0, sm: "24px", lg: 0 },
-          bgcolor: "background.paper", /* #0d0d0d */
+          bgcolor: "background.paper" /* #0d0d0d */,
           p: { xs: "14px", lg: "32px 20px" },
           gap: "10px",
           overflow: "hidden",
@@ -855,10 +852,7 @@ export default function SessionPage() {
         />
 
         {/* ── CHAT PANEL (overlay) ── */}
-        <ChatPanel
-          open={chatOpen}
-          onClose={() => setChatOpen(false)}
-        />
+        <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
 
         {/* Confirm exit dialog */}
         <ConfirmDialog

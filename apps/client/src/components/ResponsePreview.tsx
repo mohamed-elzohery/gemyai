@@ -35,8 +35,7 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
       : ["#90CAF9", "#42A5F5"];
 
   // Status label
-  const statusLabel =
-    response.mode === "listening" ? "Listening" : "Idle";
+  const statusLabel = response.mode === "listening" ? "Listening" : "Idle";
 
   // Whether to show the orb (idle, listening, text all show orb)
   const showOrb =
