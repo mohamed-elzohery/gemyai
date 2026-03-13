@@ -15,7 +15,7 @@ import Box from "@mui/material/Box";
 // Types
 // ---------------------------------------------------------------------------
 
-export type AgentState = null | "thinking" | "listening" | "talking";
+export type AgentState = null | "listening";
 
 interface OrbProps {
   colors?: [string, string];
@@ -129,22 +129,13 @@ function Scene({
     let targetIn = 0;
     let targetOut = 0.3;
 
-    if (agentRef.current === null) {
+    if (agentRef.current === "listening") {
+      targetIn = clamp01(0.55 + Math.sin(t * 3.2) * 0.35);
+      targetOut = 0.45;
+    } else {
       // idle
       targetIn = 0;
       targetOut = 0.3;
-    } else if (agentRef.current === "listening") {
-      targetIn = clamp01(0.55 + Math.sin(t * 3.2) * 0.35);
-      targetOut = 0.45;
-    } else if (agentRef.current === "talking") {
-      targetIn = clamp01(0.65 + Math.sin(t * 4.8) * 0.22);
-      targetOut = clamp01(0.75 + Math.sin(t * 3.6) * 0.22);
-    } else {
-      // thinking
-      const base = 0.38 + 0.07 * Math.sin(t * 0.7);
-      const wander = 0.05 * Math.sin(t * 2.1) * Math.sin(t * 0.37 + 1.2);
-      targetIn = clamp01(base + wander);
-      targetOut = clamp01(0.48 + 0.12 * Math.sin(t * 1.05 + 0.6));
     }
 
     curInRef.current += (targetIn - curInRef.current) * 0.2;

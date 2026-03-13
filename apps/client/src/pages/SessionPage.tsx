@@ -3,8 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
 import Typography from "@mui/material/Typography";
-import useMediaQuery from "@mui/material/useMediaQuery";
-import { useTheme } from "@mui/material/styles";
 import type {
   ChatMessage,
   AdkEvent,
@@ -28,6 +26,7 @@ import SessionBottomBar from "../components/SessionBottomBar";
 import ResponsePreview from "../components/ResponsePreview";
 import type { ResponseState } from "../components/ResponsePreview";
 import CameraPreview from "../components/CameraPreview";
+import ChatPanel from "../components/ChatPanel";
 import ConfirmDialog from "../components/ConfirmDialog";
 
 export default function SessionPage() {
@@ -35,8 +34,6 @@ export default function SessionPage() {
   const userId = user?.id ?? "anonymous";
   const { id: sessionId = "default" } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const theme = useTheme();
-  const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
 
   // ---- Session state ----
   const [sessionStarted, setSessionStarted] = useState(false);
@@ -54,12 +51,11 @@ export default function SessionPage() {
   const [micOn, setMicOn] = useState(true);
   const [previewVisible, setPreviewVisible] = useState(true);
 
-  // ---- Bar visibility (mobile auto-hide) ----
-  const [barsVisible, setBarsVisible] = useState(true);
-  const barsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   // ---- Confirm dialog ----
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  // ---- Chat panel ----
+  const [chatOpen, setChatOpen] = useState(false);
 
   // ---- Chat messages (kept for future chat panel) ----
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -515,13 +511,32 @@ export default function SessionPage() {
     [ws, micOn],
   );
 
+  // ---- Helper: start the 1 fps frame streaming interval ----
+  const startFrameStreaming = useCallback(() => {
+    captureAndSendSnapshot(); // immediate first frame
+    if (frameStreamIntervalRef.current)
+      clearInterval(frameStreamIntervalRef.current);
+    frameStreamIntervalRef.current = setInterval(
+      captureAndSendSnapshot,
+      1000, // 1 fps — matches ADK recommended max
+    );
+    console.log("[Session] Started 1 fps background frame streaming");
+  }, [captureAndSendSnapshot]);
+
   // ---- Start session (auto on mount) ----
   const startSession = useCallback(async () => {
     try {
       const videoEl = document.getElementById(
         "cameraPreviewLive",
       ) as HTMLVideoElement;
-      if (videoEl) await camera.init(videoEl);
+      if (videoEl) {
+        await camera.init(videoEl);
+        console.log(
+          `[Session] Camera initialized — videoWidth=${videoEl.videoWidth}`,
+        );
+      } else {
+        console.warn("[Session] Camera video element not found in DOM");
+      }
       await audioPlayer.init();
       await audioRecorder.init(audioRecorderHandler);
 
@@ -539,18 +554,18 @@ export default function SessionPage() {
 
       // Start continuous 1 fps frame streaming so the model always has
       // visual context and the frame buffer is warm for tool calls.
-      captureAndSendSnapshot(); // immediate first frame
-      if (frameStreamIntervalRef.current)
-        clearInterval(frameStreamIntervalRef.current);
-      frameStreamIntervalRef.current = setInterval(
-        captureAndSendSnapshot,
-        1000, // 1 fps — matches ADK recommended max
-      );
-      console.log("[Session] Started 1 fps background frame streaming");
+      startFrameStreaming();
     } catch (err: unknown) {
       const error = err as Error;
       console.error("Session start failed:", error.message);
-      // Still mark session as started so user can retry
+      // Surface the error so the user knows the camera/mic failed
+      addMessage({
+        id: randomId(),
+        type: "system",
+        text: `Failed to initialize session: ${error.message}. Please check camera/microphone permissions and refresh.`,
+      });
+      // Still mark session as started so user can retry via toggles
+      setSessionStarted(true);
     }
   }, [
     camera,
@@ -558,7 +573,8 @@ export default function SessionPage() {
     audioRecorder,
     audioRecorderHandler,
     vad,
-    captureAndSendSnapshot,
+    startFrameStreaming,
+    addMessage,
   ]);
 
   // ---- End session ----
@@ -590,47 +606,36 @@ export default function SessionPage() {
   useEffect(() => {
     if (sessionInitRef.current) return;
     sessionInitRef.current = true;
-    // Small delay to ensure DOM is ready
-    const timer = setTimeout(() => {
-      startSession();
-    }, 300);
-    return () => clearTimeout(timer);
+
+    // Wait for the video element to appear in the DOM before starting,
+    // with a fallback timeout so the session still starts if the element
+    // takes longer than expected (e.g. slower production loads).
+    let cancelled = false;
+    const tryStart = () => {
+      if (cancelled) return;
+      const videoEl = document.getElementById("cameraPreviewLive");
+      if (videoEl) {
+        startSession();
+      } else {
+        // Retry with requestAnimationFrame to wait for the next paint
+        requestAnimationFrame(tryStart);
+      }
+    };
+    // Kick off after a micro-delay so React has committed the DOM
+    requestAnimationFrame(tryStart);
+    // Safety fallback — start anyway after 2 s even if video not found
+    const fallback = setTimeout(() => {
+      if (!cancelled) {
+        console.warn("[Session] Fallback: starting session without waiting for video element");
+        startSession();
+      }
+    }, 2000);
+    return () => {
+      cancelled = true;
+      clearTimeout(fallback);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ---- Bar auto-hide logic ----
-  const resetBarTimer = useCallback(() => {
-    if (barsTimerRef.current) clearTimeout(barsTimerRef.current);
-    setBarsVisible(true);
-    barsTimerRef.current = setTimeout(() => {
-      setBarsVisible(false);
-    }, 3000);
-  }, []);
-
-  // Show bars initially, then auto-hide after 3s
-  useEffect(() => {
-    resetBarTimer();
-    return () => {
-      if (barsTimerRef.current) clearTimeout(barsTimerRef.current);
-    };
-  }, [resetBarTimer]);
-
-  // Tap anywhere to toggle bars
-  const handleScreenTap = useCallback(
-    (e: React.PointerEvent) => {
-      // Don't trigger on buttons or interactive elements
-      const target = e.target as HTMLElement;
-      if (
-        target.closest("button") ||
-        target.closest("[role='button']") ||
-        target.closest("a")
-      ) {
-        return;
-      }
-      resetBarTimer();
-    },
-    [resetBarTimer],
-  );
 
   // ---- Toggle handlers ----
   const handleToggleCamera = useCallback(() => {
@@ -651,12 +656,13 @@ export default function SessionPage() {
         camera.init(videoEl).then(() => {
           setCameraOn(true);
           setPreviewVisible(true);
-          // Frame streaming will resume automatically via VAD when
-          // the user next speaks — no continuous interval needed.
+          // Restart the 1 fps frame streaming interval so the model
+          // continues to receive visual context after re-enabling.
+          startFrameStreaming();
         });
       }
     }
-  }, [cameraOn, camera]);
+  }, [cameraOn, camera, startFrameStreaming]);
 
   const handleToggleMic = useCallback(() => {
     setMicOn((prev) => !prev);
@@ -674,22 +680,6 @@ export default function SessionPage() {
   const responseState: ResponseState = (() => {
     if (!sessionStarted) {
       return { mode: "idle" };
-    }
-
-    // First check for active agent status / loading
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (msg.type === "agent-status" || msg.type === "grounding-loading") {
-        return { mode: "thinking", statusText: msg.text };
-      }
-      // Stop checking if we hit a recent input boundary
-      if (
-        msg.type === "input-transcription" ||
-        msg.type === "output-transcription" ||
-        msg.type === "agent-text"
-      ) {
-        break;
-      }
     }
 
     // Check for images or attachments in current turn
@@ -758,14 +748,11 @@ export default function SessionPage() {
       finalResponse.mode === "text"
         ? `text=${(finalResponse.text ?? "").slice(0, 60)}...`
         : "",
-      finalResponse.mode === "thinking"
-        ? `status=${finalResponse.statusText}`
-        : "",
+      "",
     );
   }, [
     finalResponse.mode,
     finalResponse.text,
-    finalResponse.statusText,
     isSpeaking,
     messages.length,
   ]);
@@ -795,78 +782,99 @@ export default function SessionPage() {
   }
 
   return (
+    /* Centering wrapper */
     <Box
-      onPointerDown={handleScreenTap}
       sx={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
         height: "100dvh",
         width: "100%",
-        display: "grid",
-        gridTemplateRows: showCameraPreview ? "7fr 3fr" : "1fr",
-        gap: { xs: 0.75, md: 1 },
-        p: { xs: 0.75, md: 1.5 },
-        bgcolor: "background.default",
+        p: { xs: 0, sm: "16px", lg: 0 },
         overflow: "hidden",
-        position: "relative",
-        boxSizing: "border-box",
-        touchAction: "manipulation",
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        [theme.breakpoints.up("md")]: {
-          gridTemplateRows: "1fr",
-          gridTemplateColumns: showCameraPreview ? "7fr 3fr" : "1fr",
-        },
+        bgcolor: "background.default",
       }}
     >
-      {/* Response Preview Area */}
+      {/* Inner phone frame */}
       <Box
         sx={{
+          display: "flex",
+          flexDirection: "column",
+          width: "100%",
+          maxWidth: { xs: "100%", sm: 393, lg: "none" },
+          height: { xs: "100%", sm: 852, lg: "100%" },
+          maxHeight: { xs: "100%", sm: 852, lg: "100%" },
+          borderRadius: { xs: 0, sm: "24px", lg: 0 },
+          bgcolor: "background.paper", /* #0d0d0d */
+          p: { xs: "14px", lg: "32px 20px" },
+          gap: "10px",
           overflow: "hidden",
           position: "relative",
-          minHeight: 0,
-          borderRadius: 3,
-          boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
+          boxSizing: "border-box",
+          touchAction: "manipulation",
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
       >
-        <ResponsePreview response={finalResponse} />
+        {/* ── TOP BAR ── */}
+        <SessionTopBar
+          connected={ws.connected}
+          chatOpen={chatOpen}
+          onBack={() => setConfirmOpen(true)}
+          onToggleChat={() => setChatOpen((p) => !p)}
+        />
+
+        {/* ── MAIN AREA ── */}
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: { xs: "column", lg: "row" },
+            flex: 1,
+            minHeight: 0,
+            gap: showCameraPreview ? { xs: "10px", lg: "20px" } : 0,
+            transition: "gap 0.4s ease",
+          }}
+        >
+          {/* Orb area */}
+          <ResponsePreview response={finalResponse} />
+
+          {/* Camera preview */}
+          <CameraPreview visible={showCameraPreview} />
+        </Box>
+
+        {/* ── BOTTOM BAR ── */}
+        <SessionBottomBar
+          cameraOn={cameraOn}
+          micOn={micOn}
+          previewVisible={previewVisible}
+          onEndSession={endSession}
+          onToggleCamera={handleToggleCamera}
+          onToggleMic={handleToggleMic}
+          onTogglePreview={handleTogglePreview}
+          onSwitchCamera={handleSwitchCamera}
+        />
+
+        {/* ── CHAT PANEL (overlay) ── */}
+        <ChatPanel
+          open={chatOpen}
+          onClose={() => setChatOpen(false)}
+        />
+
+        {/* Confirm exit dialog */}
+        <ConfirmDialog
+          open={confirmOpen}
+          title="End Session?"
+          message="Are you sure you want to end this session? Your conversation will not be saved."
+          confirmLabel="End Session"
+          cancelLabel="Stay"
+          confirmColor="error"
+          onConfirm={() => {
+            setConfirmOpen(false);
+            endSession();
+          }}
+          onCancel={() => setConfirmOpen(false)}
+        />
       </Box>
-
-      {/* Camera Preview Area */}
-      <CameraPreview visible={showCameraPreview} />
-
-      {/* Top bar (fixed overlay) */}
-      <SessionTopBar
-        visible={barsVisible}
-        connected={ws.connected}
-        onBack={() => setConfirmOpen(true)}
-      />
-
-      {/* Bottom bar (fixed overlay) */}
-      <SessionBottomBar
-        visible={barsVisible}
-        cameraOn={cameraOn}
-        micOn={micOn}
-        previewVisible={previewVisible}
-        onEndSession={endSession}
-        onToggleCamera={handleToggleCamera}
-        onToggleMic={handleToggleMic}
-        onTogglePreview={handleTogglePreview}
-        onSwitchCamera={handleSwitchCamera}
-      />
-
-      {/* Confirm exit dialog */}
-      <ConfirmDialog
-        open={confirmOpen}
-        title="End Session?"
-        message="Are you sure you want to end this session? Your conversation will not be saved."
-        confirmLabel="End Session"
-        cancelLabel="Stay"
-        confirmColor="error"
-        onConfirm={() => {
-          setConfirmOpen(false);
-          endSession();
-        }}
-        onCancel={() => setConfirmOpen(false)}
-      />
     </Box>
   );
 }

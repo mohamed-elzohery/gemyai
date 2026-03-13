@@ -21,6 +21,21 @@ export function useCamera() {
             },
         });
         videoElement.srcObject = stream;
+
+        // Wait for video metadata to load so videoWidth/videoHeight are
+        // populated, then explicitly play — this avoids relying on the HTML
+        // autoplay attribute which can silently fail in production.
+        await new Promise<void>((resolve, reject) => {
+            videoElement.onloadedmetadata = () => {
+                videoElement
+                    .play()
+                    .then(() => resolve())
+                    .catch(reject);
+            };
+            // Safety timeout in case metadata never fires
+            setTimeout(() => resolve(), 3000);
+        });
+
         streamRef.current = stream;
         videoRef.current = videoElement;
     }, []);

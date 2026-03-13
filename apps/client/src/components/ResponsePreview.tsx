@@ -1,13 +1,13 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from "react";
+import { useState } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import { useTheme } from "@mui/material/styles";
 import Orb from "./Orb";
 import type { AgentState } from "./Orb";
 import ImageViewerModal from "./ImageViewerModal";
+import { glassCardSx } from "../theme";
 
 export interface ResponseState {
-  mode: "idle" | "listening" | "text" | "image" | "thinking" | "attachment";
+  mode: "idle" | "listening" | "text" | "image" | "attachment";
   text?: string;
   imageUrl?: string;
   statusText?: string;
@@ -21,355 +21,307 @@ interface ResponsePreviewProps {
 }
 
 export default function ResponsePreview({ response }: ResponsePreviewProps) {
-  const theme = useTheme();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const [imageModalOpen, setImageModalOpen] = useState(false);
 
-  // Track whether user has scrolled up manually
-  const userScrolledRef = useRef(false);
-  const prevScrollTopRef = useRef(0);
-
-  const handleScroll = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const { scrollTop, scrollHeight, clientHeight } = el;
-    const isNearBottom = scrollHeight - scrollTop - clientHeight < 60;
-    if (scrollTop < prevScrollTopRef.current && !isNearBottom) {
-      userScrolledRef.current = true;
-    } else if (isNearBottom) {
-      userScrolledRef.current = false;
-    }
-    prevScrollTopRef.current = scrollTop;
-  }, []);
-
-  // Auto-scroll to bottom for each new text chunk unless user scrolled up
-  useEffect(() => {
-    if (response.mode === "text" && !userScrolledRef.current) {
-      scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [response.text, response.mode]);
-
-  // Reset scroll tracking when mode changes
-  useEffect(() => {
-    userScrolledRef.current = false;
-  }, [response.mode]);
-
   // ---------------------------------------------------------------------------
-  // Map response mode → Orb AgentState
+  // Map mode → Orb AgentState (only idle and listening)
   // ---------------------------------------------------------------------------
-  const orbAgentState: AgentState = useMemo(() => {
-    switch (response.mode) {
-      case "listening":
-        return "listening";
-      case "thinking":
-        return "thinking";
-      case "text":
-        return "talking";
-      default:
-        return null;
-    }
-  }, [response.mode]);
+  const orbAgentState: AgentState =
+    response.mode === "listening" ? "listening" : null;
 
-  // Color presets per state
-  const orbColors: [string, string] = useMemo(() => {
-    switch (response.mode) {
-      case "listening":
-        return [theme.palette.primary.light, theme.palette.primary.main];
-      case "thinking":
-        return [theme.palette.secondary.light, theme.palette.secondary.main];
-      default:
-        return ["#90CAF9", "#42A5F5"];
-    }
-  }, [response.mode, theme]);
+  const orbColors: [string, string] =
+    response.mode === "listening"
+      ? ["#a78bfa", "#7B6FFF"]
+      : ["#90CAF9", "#42A5F5"];
 
-  // ---------------------------------------------------------------------------
-  // Text with last-word primary-color highlight
-  // ---------------------------------------------------------------------------
-  const renderedText = useMemo(() => {
-    const raw = response.text ?? "";
-    if (!raw || !response.isPartial) return raw;
+  // Status label
+  const statusLabel =
+    response.mode === "listening" ? "Listening" : "Idle";
 
-    const trimmed = raw.trimEnd();
-    const lastSpace = trimmed.lastIndexOf(" ");
-    if (lastSpace < 0) {
-      return (
-        <>
-          <Box
-            component="span"
-            sx={{ color: "primary.main", transition: "color 0.2s" }}
-          >
-            {trimmed}
-          </Box>
-          {raw.slice(trimmed.length)}
-        </>
-      );
-    }
+  // Whether to show the orb (idle, listening, text all show orb)
+  const showOrb =
+    response.mode === "idle" ||
+    response.mode === "listening" ||
+    response.mode === "text";
 
-    return (
-      <>
-        {trimmed.slice(0, lastSpace + 1)}
-        <Box
-          component="span"
-          sx={{ color: "primary.main", transition: "color 0.2s" }}
-        >
-          {trimmed.slice(lastSpace + 1)}
-        </Box>
-        {raw.slice(trimmed.length)}
-      </>
-    );
-  }, [response.text, response.isPartial]);
+  // Streaming text line (shown below orb)
+  const streamingText = response.mode === "text" ? (response.text ?? "") : "";
 
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
   return (
     <Box
       sx={{
-        width: "100%",
-        height: "100%",
+        ...glassCardSx,
+        flex: 1,
+        minHeight: 0,
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
         position: "relative",
         overflow: "hidden",
-        bgcolor: "background.default",
+        py: { xs: 0, lg: "16px" },
       }}
     >
-      {/* Idle / Listening / Thinking → Orb */}
-      {(response.mode === "idle" ||
-        response.mode === "listening" ||
-        response.mode === "thinking") && (
+      {/* Zone 1: Status label at TOP */}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          pt: "16px",
+          pb: "8px",
+          flexShrink: 0,
+        }}
+      >
         <Box
           sx={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "100%",
-            height: "100%",
-            position: "relative",
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            bgcolor: "#a78bfa",
+            animation: "dotPulse 1.5s ease-in-out infinite",
+            "@keyframes dotPulse": {
+              "0%, 100%": { opacity: 1, transform: "scale(1)" },
+              "50%": { opacity: 0.5, transform: "scale(0.75)" },
+            },
           }}
-        >
-          <Box
-            sx={{
-              width: { xs: 220, sm: 260, md: 300 },
-              height: { xs: 220, sm: 260, md: 300 },
-            }}
-          >
-            <Orb agentState={orbAgentState} colors={orbColors} />
-          </Box>
-
-          {/* Phase label below the orb — Listening / Thinking */}
-          {(response.mode === "listening" ||
-            (response.mode === "thinking" && response.statusText)) && (
-            <Typography
-              variant="body1"
-              sx={{
-                mt: 3,
-                color: "text.secondary",
-                fontWeight: 600,
-                fontStyle: "italic",
-                textAlign: "center",
-                px: 3,
-                animation: "statusPulse 1.5s ease-in-out infinite",
-                "@keyframes statusPulse": {
-                  "0%, 100%": { opacity: 0.6 },
-                  "50%": { opacity: 1 },
-                },
-              }}
-            >
-              {response.mode === "listening"
-                ? "Listening..."
-                : response.statusText}
-            </Typography>
-          )}
-        </Box>
-      )}
-
-      {/* Text → Streaming response */}
-      {response.mode === "text" && (
-        <Box
-          ref={containerRef}
-          onScroll={handleScroll}
+        />
+        <Typography
           sx={{
-            width: "100%",
-            height: "100%",
-            overflowY: "auto",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "flex-start",
-            px: { xs: 3, md: 6 },
-            py: { xs: 3, md: 12 },
-            WebkitOverflowScrolling: "touch",
+            fontSize: "11px",
+            textTransform: "uppercase",
+            letterSpacing: "0.18em",
+            fontWeight: 600,
+            color: "#c4b5fd",
           }}
         >
-          <Typography
-            component="div"
-            sx={{
-              fontSize: { xs: "2rem" },
-              fontWeight: 500,
-              lineHeight: 1.65,
-              color: "text.primary",
-              wordBreak: "break-word",
-              whiteSpace: "pre-wrap",
-              flexGrow: 1,
-            }}
-          >
-            {renderedText}
-            {response.isPartial && (
+          {statusLabel}
+        </Typography>
+      </Box>
+
+      {/* Zone 2: Center — Orb or Image/Attachment */}
+      <Box
+        sx={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "100%",
+          minHeight: 0,
+        }}
+      >
+        {/* Orb (idle, listening, text modes) */}
+        {showOrb && (
+          <Box sx={{ position: "relative", width: 160, height: 160 }}>
+            {/* Pulsing rings */}
+            {[
+              { inset: -18, delay: "0s", opacity: 0.3 },
+              { inset: -36, delay: "0.6s", opacity: 0.18 },
+              { inset: -54, delay: "1.2s", opacity: 0.09 },
+            ].map((ring, i) => (
               <Box
-                component="span"
+                key={i}
                 sx={{
-                  display: "inline-block",
-                  width: 3,
-                  height: "1.2em",
-                  bgcolor: "primary.main",
-                  ml: 0.5,
-                  verticalAlign: "text-bottom",
-                  animation: "cursorBlink 1s step-end infinite",
-                  "@keyframes cursorBlink": {
-                    "0%, 100%": { opacity: 1 },
-                    "50%": { opacity: 0 },
+                  position: "absolute",
+                  inset: ring.inset,
+                  borderRadius: "50%",
+                  border: `2px solid rgba(123,111,255,${ring.opacity})`,
+                  animation: `orbPulseRing 3s ease-out infinite`,
+                  animationDelay: ring.delay,
+                  "@keyframes orbPulseRing": {
+                    "0%": { transform: "scale(0.9)", opacity: 0.8 },
+                    "100%": { transform: "scale(1.4)", opacity: 0 },
                   },
                 }}
               />
-            )}
-          </Typography>
-          <div ref={scrollRef} />
-        </Box>
-      )}
+            ))}
+            {/* WebGL Orb */}
+            <Box
+              sx={{
+                position: "absolute",
+                inset: 0,
+                filter:
+                  "drop-shadow(0 0 60px rgba(108,99,255,0.4)) drop-shadow(0 0 120px rgba(108,99,255,0.18))",
+              }}
+            >
+              <Orb agentState={orbAgentState} colors={orbColors} />
+            </Box>
+          </Box>
+        )}
 
-      {/* Image (annotated) → Shows in Orb area, replaces Orb */}
-      {response.mode === "image" && response.imageUrl && (
-        <>
+        {/* Image (annotated) — replaces Orb */}
+        {response.mode === "image" && response.imageUrl && (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "100%",
+              height: "100%",
+              px: 2,
+            }}
+          >
+            <Box
+              component="img"
+              src={response.imageUrl}
+              alt="Annotated image"
+              onClick={() => setImageModalOpen(true)}
+              sx={{
+                maxWidth: "100%",
+                maxHeight: "100%",
+                objectFit: "contain",
+                cursor: "pointer",
+                userSelect: "none",
+                WebkitTouchCallout: "none",
+                borderRadius: "12px",
+                animation: "imageFadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
+                "@keyframes imageFadeIn": {
+                  from: { opacity: 0, transform: "scale(0.92)" },
+                  to: { opacity: 1, transform: "scale(1)" },
+                },
+              }}
+            />
+          </Box>
+        )}
+
+        {/* Attachment → Download card — replaces Orb */}
+        {response.mode === "attachment" && response.downloadUrl && (
           <Box
             sx={{
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              width: "100%",
-              height: "100%",
-              position: "relative",
+              gap: 3,
+              animation: "imageFadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
+              "@keyframes imageFadeIn": {
+                from: { opacity: 0, transform: "scale(0.92)" },
+                to: { opacity: 1, transform: "scale(1)" },
+              },
             }}
           >
             <Box
               sx={{
-                width: { xs: 280, sm: 340, md: 400 },
-                height: { xs: 280, sm: 340, md: 400 },
+                width: 80,
+                height: 80,
+                borderRadius: 3,
+                bgcolor: "error.main",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                borderRadius: 3,
-                overflow: "hidden",
+                boxShadow: 3,
               }}
             >
-              <Box
-                component="img"
-                src={response.imageUrl}
-                alt="Annotated image"
-                onClick={() => setImageModalOpen(true)}
-                sx={{
-                  maxWidth: "100%",
-                  maxHeight: "100%",
-                  objectFit: "contain",
-                  cursor: "pointer",
-                  userSelect: "none",
-                  WebkitTouchCallout: "none",
-                  borderRadius: 2,
-                  animation: "imageFadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
-                  "@keyframes imageFadeIn": {
-                    from: { opacity: 0, transform: "scale(0.92)" },
-                    to: { opacity: 1, transform: "scale(1)" },
-                  },
-                }}
-              />
+              <Typography
+                sx={{ color: "#fff", fontWeight: 800, fontSize: "1.4rem" }}
+              >
+                PDF
+              </Typography>
+            </Box>
+            <Typography
+              sx={{
+                color: "#f3f4f6",
+                fontWeight: 600,
+                fontSize: "1.125rem",
+                textAlign: "center",
+              }}
+            >
+              {response.text || "Service Report"}
+            </Typography>
+            <Typography
+              sx={{
+                color: "rgba(255,255,255,0.6)",
+                textAlign: "center",
+                maxWidth: 300,
+                fontSize: "1rem",
+              }}
+            >
+              Your report is ready. Tap below to download.
+            </Typography>
+            <Box
+              component="a"
+              href={response.downloadUrl}
+              download={response.filename || "fix_report.pdf"}
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 1,
+                px: 4,
+                py: 1.5,
+                borderRadius: 2,
+                bgcolor: "primary.main",
+                color: "#fff",
+                fontWeight: 600,
+                fontSize: "1rem",
+                textDecoration: "none",
+                cursor: "pointer",
+                transition: "background-color 0.2s",
+                "&:hover": { bgcolor: "primary.dark" },
+                boxShadow: 2,
+              }}
+            >
+              ↓ Download Report
             </Box>
           </Box>
-          <ImageViewerModal
-            open={imageModalOpen}
-            imageUrl={response.imageUrl}
-            onClose={() => setImageModalOpen(false)}
-          />
-        </>
-      )}
+        )}
+      </Box>
 
-      {/* Attachment → Download card */}
-      {response.mode === "attachment" && response.downloadUrl && (
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 3,
-            animation: "imageFadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
-            "@keyframes imageFadeIn": {
-              from: { opacity: 0, transform: "scale(0.92)" },
-              to: { opacity: 1, transform: "scale(1)" },
-            },
-          }}
-        >
-          {/* PDF icon */}
-          <Box
+      {/* Zone 3: Streaming text (bottom zone, fixed height) */}
+      <Box
+        sx={{
+          width: "100%",
+          px: "20px",
+          textAlign: "center",
+          height: 52,
+          mb: "20px",
+          mt: "12px",
+          flexShrink: 0,
+          overflow: "hidden",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {streamingText && (
+          <Typography
             sx={{
-              width: 80,
-              height: 80,
-              borderRadius: 3,
-              bgcolor: "error.main",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: 3,
+              fontSize: "0.875rem",
+              fontWeight: 500,
+              color: "rgba(255,255,255,0.88)",
+              lineHeight: 1.7,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              /* Blinking cursor */
+              "&::after": {
+                content: "'|'",
+                animation: response.isPartial
+                  ? "blink 0.8s step-end infinite"
+                  : "none",
+                color: "#a78bfa",
+                fontWeight: 300,
+                ml: "2px",
+                display: response.isPartial ? "inline" : "none",
+              },
+              "@keyframes blink": {
+                "0%, 100%": { opacity: 1 },
+                "50%": { opacity: 0 },
+              },
             }}
           >
-            <Typography
-              sx={{ color: "#fff", fontWeight: 800, fontSize: "1.4rem" }}
-            >
-              PDF
-            </Typography>
-          </Box>
-
-          <Typography
-            variant="h6"
-            sx={{ color: "text.primary", fontWeight: 600, textAlign: "center" }}
-          >
-            {response.text || "Service Report"}
+            {streamingText}
           </Typography>
+        )}
+      </Box>
 
-          <Typography
-            variant="body2"
-            sx={{ color: "text.secondary", textAlign: "center", maxWidth: 300 }}
-          >
-            Your report is ready. Tap below to download.
-          </Typography>
-
-          <Box
-            component="a"
-            href={response.downloadUrl}
-            download={response.filename || "fix_report.pdf"}
-            sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 1,
-              px: 4,
-              py: 1.5,
-              borderRadius: 2,
-              bgcolor: "primary.main",
-              color: "#fff",
-              fontWeight: 600,
-              fontSize: "1rem",
-              textDecoration: "none",
-              cursor: "pointer",
-              transition: "background-color 0.2s",
-              "&:hover": { bgcolor: "primary.dark" },
-              boxShadow: 2,
-            }}
-          >
-            ↓ Download Report
-          </Box>
-        </Box>
+      {/* Image modal */}
+      {response.mode === "image" && response.imageUrl && (
+        <ImageViewerModal
+          open={imageModalOpen}
+          imageUrl={response.imageUrl}
+          onClose={() => setImageModalOpen(false)}
+        />
       )}
     </Box>
   );

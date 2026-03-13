@@ -1,4 +1,7 @@
 import Box from "@mui/material/Box";
+import Typography from "@mui/material/Typography";
+import VideocamIcon from "@mui/icons-material/Videocam";
+import { glassCardSx } from "../theme";
 
 interface CameraPreviewProps {
   visible: boolean;
@@ -7,22 +10,47 @@ interface CameraPreviewProps {
 export default function CameraPreview({ visible }: CameraPreviewProps) {
   return (
     <Box
-      sx={{
-        width: "100%",
-        height: "100%",
-        display: visible ? "block" : "none",
-        bgcolor: "#000",
-        position: "relative",
-        overflow: "hidden",
-        borderRadius: 3,
-        // Add responsive padding top here
-        // 'md' is the medium breakpoint (900px by default)
-        pt: {
-          xs: 0, // 0px on extra-small/small screens
-          md: 4, // 32px on medium screens and up (4 * 8px theme spacing)
+      sx={[
+        {
+          ...glassCardSx,
+          flexShrink: 0,
+          position: "relative",
+          overflow: "hidden",
+          maxWidth: 1000,
+          maxHeight: 1000,
+          /* collapse transitions */
+          transition:
+            "flex 0.4s ease, max-height 0.4s ease, max-width 0.4s ease, min-width 0.4s ease, opacity 0.35s ease, padding 0.4s ease, margin 0.4s ease",
         },
-      }}
+        /* Desktop (lg): 1/3 width, stretch vertically */
+        (theme) => ({
+          [theme.breakpoints.up("lg")]: {
+            ...(visible && {
+              width: "33.333%",
+              alignSelf: "stretch",
+              flexShrink: 0,
+            }),
+          },
+        }),
+        /* Collapsed state */
+        ...(!visible
+          ? [
+              {
+                flex: "0 0 0 !important" as const,
+                maxHeight: "0 !important",
+                maxWidth: "0 !important",
+                minWidth: "0 !important",
+                opacity: 0,
+                p: "0 !important",
+                m: "0 !important",
+                border: "none !important",
+                overflow: "hidden" as const,
+              },
+            ]
+          : []),
+      ]}
     >
+      {/* Video */}
       <Box
         component="video"
         id="cameraPreviewLive"
@@ -30,13 +58,64 @@ export default function CameraPreview({ visible }: CameraPreviewProps) {
         playsInline
         muted
         sx={{
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          transform: "scaleX(-1)",
           display: "block",
+          width: "100%",
+          borderRadius: "10px",
+          transform: "scaleX(-1)",
+          height: { xs: "auto", lg: "100%" },
+          objectFit: { xs: "contain", lg: "cover" },
         }}
       />
+
+      {/* "Preview" label overlay */}
+      <Box
+        sx={{
+          position: "absolute",
+          top: 12,
+          left: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          bgcolor: "rgba(0,0,0,0.6)",
+          borderRadius: "8px",
+          py: "4px",
+          pl: "8px",
+          pr: "10px",
+        }}
+      >
+        <VideocamIcon
+          sx={{ width: 13, height: 13, color: "rgba(255,255,255,0.8)" }}
+        />
+        <Typography
+          sx={{
+            fontSize: "11px",
+            fontWeight: 500,
+            color: "rgba(255,255,255,0.8)",
+          }}
+        >
+          Preview
+        </Typography>
+      </Box>
+
+      {/* Camera fallback */}
+      <Box
+        id="camera-fallback"
+        sx={{
+          position: "absolute",
+          inset: 0,
+          display: "none",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 1,
+        }}
+      >
+        <Typography
+          sx={{ fontSize: "0.75rem", fontWeight: 500, color: "rgba(255,255,255,0.35)" }}
+        >
+          Camera unavailable
+        </Typography>
+      </Box>
     </Box>
   );
 }

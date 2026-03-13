@@ -1,7 +1,5 @@
 import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
-import useMediaQuery from "@mui/material/useMediaQuery";
-import { useTheme } from "@mui/material/styles";
 import CallEndIcon from "@mui/icons-material/CallEnd";
 import VideocamIcon from "@mui/icons-material/Videocam";
 import VideocamOffIcon from "@mui/icons-material/VideocamOff";
@@ -10,9 +8,14 @@ import MicOffIcon from "@mui/icons-material/MicOff";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import CameraswitchIcon from "@mui/icons-material/Cameraswitch";
+import {
+  glassCardSx,
+  iconBtnSx,
+  iconBtnDangerSx,
+  iconBtnMutedSx,
+} from "../theme";
 
 interface SessionBottomBarProps {
-  visible: boolean;
   cameraOn: boolean;
   micOn: boolean;
   previewVisible: boolean;
@@ -24,7 +27,6 @@ interface SessionBottomBarProps {
 }
 
 export default function SessionBottomBar({
-  visible,
   cameraOn,
   micOn,
   previewVisible,
@@ -34,91 +36,58 @@ export default function SessionBottomBar({
   onTogglePreview,
   onSwitchCamera,
 }: SessionBottomBarProps) {
-  const theme = useTheme();
-  const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
-
-  const show = isDesktop || visible;
-
   return (
     <Box
       sx={{
-        position: "fixed",
-        bottom: 0,
-        left: 0,
-        right: 0,
-        zIndex: 1100,
+        ...glassCardSx,
+        flexShrink: 0,
+        height: { xs: "5rem", lg: 80 },
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        gap: { xs: 1.5, md: 3 },
-        px: 2,
-        py: 1.5,
-        pb: { xs: "max(env(safe-area-inset-bottom, 12px), 12px)", md: 1.5 },
-        bgcolor: "rgba(255,255,255,0.85)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
-        borderTop: { xs: "none", md: "1px solid" },
-        borderColor: "divider",
-        // Mobile: pill shape, inset from edges
-        mx: { xs: 1, md: 0 },
-        mb: { xs: 1, md: 0 },
-        width: { xs: "calc(100% - 16px)", md: "100%" },
-        borderRadius: { xs: 9999, md: 0 },
-        boxShadow: { xs: "0 2px 8px rgba(0,0,0,0.10)", md: "none" },
-        transform: show ? "translateY(0)" : "translateY(calc(100% + 16px))",
-        transition: "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-        pointerEvents: show ? "auto" : "none",
+        gap: { xs: "16px", sm: "24px", lg: "32px" },
+        px: "12px",
       }}
     >
+      {/* Mute toggle */}
+      <IconButton
+        onClick={onToggleMic}
+        aria-label={micOn ? "Mute microphone" : "Unmute microphone"}
+        sx={{
+          ...iconBtnSx,
+          ...(!micOn && iconBtnMutedSx),
+        }}
+      >
+        {micOn ? (
+          <MicIcon sx={{ width: 20, height: 20 }} />
+        ) : (
+          <MicOffIcon sx={{ width: 20, height: 20 }} />
+        )}
+      </IconButton>
+
       {/* Camera toggle */}
       <IconButton
         onClick={onToggleCamera}
         aria-label={cameraOn ? "Turn off camera" : "Turn on camera"}
         sx={{
-          width: 48,
-          height: 48,
-          bgcolor: cameraOn ? "action.hover" : "grey.300",
-          color: cameraOn ? "text.primary" : "text.secondary",
-          "&:hover": {
-            bgcolor: cameraOn ? "action.selected" : "grey.400",
-          },
+          ...iconBtnSx,
+          ...(!cameraOn && iconBtnMutedSx),
         }}
       >
-        {cameraOn ? <VideocamIcon /> : <VideocamOffIcon />}
-      </IconButton>
-
-      {/* Mic toggle */}
-      <IconButton
-        onClick={onToggleMic}
-        aria-label={micOn ? "Mute microphone" : "Unmute microphone"}
-        sx={{
-          width: 48,
-          height: 48,
-          bgcolor: micOn ? "action.hover" : "grey.300",
-          color: micOn ? "text.primary" : "text.secondary",
-          "&:hover": {
-            bgcolor: micOn ? "action.selected" : "grey.400",
-          },
-        }}
-      >
-        {micOn ? <MicIcon /> : <MicOffIcon />}
+        {cameraOn ? (
+          <VideocamIcon sx={{ width: 20, height: 20 }} />
+        ) : (
+          <VideocamOffIcon sx={{ width: 20, height: 20 }} />
+        )}
       </IconButton>
 
       {/* End session (red, larger) */}
       <IconButton
         onClick={onEndSession}
         aria-label="End session"
-        sx={{
-          width: 56,
-          height: 56,
-          bgcolor: "error.main",
-          color: "#fff",
-          "&:hover": {
-            bgcolor: "error.dark",
-          },
-        }}
+        sx={{ ...iconBtnDangerSx }}
       >
-        <CallEndIcon sx={{ fontSize: 28 }} />
+        <CallEndIcon sx={{ fontSize: 22 }} />
       </IconButton>
 
       {/* Preview toggle */}
@@ -129,51 +98,30 @@ export default function SessionBottomBar({
           previewVisible ? "Hide camera preview" : "Show camera preview"
         }
         sx={{
-          width: 48,
-          height: 48,
-          bgcolor: !cameraOn
-            ? "grey.200"
-            : previewVisible
-              ? "action.hover"
-              : "grey.300",
-          color: !cameraOn
-            ? "grey.400"
-            : previewVisible
-              ? "text.primary"
-              : "text.secondary",
-          "&:hover": {
-            bgcolor: cameraOn
-              ? previewVisible
-                ? "action.selected"
-                : "grey.400"
-              : "grey.200",
-          },
+          ...iconBtnSx,
+          ...((!previewVisible || !cameraOn) && iconBtnMutedSx),
+          ...(!cameraOn && { opacity: 0.4, pointerEvents: "none" }),
         }}
       >
         {previewVisible && cameraOn ? (
-          <VisibilityIcon />
+          <VisibilityIcon sx={{ width: 20, height: 20 }} />
         ) : (
-          <VisibilityOffIcon />
+          <VisibilityOffIcon sx={{ width: 20, height: 20 }} />
         )}
       </IconButton>
 
-      {/* Camera switch — mobile only */}
-      {!isDesktop && onSwitchCamera && (
+      {/* Switch Camera */}
+      {onSwitchCamera && (
         <IconButton
           onClick={onSwitchCamera}
           disabled={!cameraOn}
           aria-label="Switch camera"
           sx={{
-            width: 48,
-            height: 48,
-            bgcolor: cameraOn ? "action.hover" : "grey.200",
-            color: cameraOn ? "text.primary" : "grey.400",
-            "&:hover": {
-              bgcolor: cameraOn ? "action.selected" : "grey.200",
-            },
+            ...iconBtnSx,
+            ...(!cameraOn && { opacity: 0.4, pointerEvents: "none" }),
           }}
         >
-          <CameraswitchIcon />
+          <CameraswitchIcon sx={{ width: 20, height: 20 }} />
         </IconButton>
       )}
     </Box>
