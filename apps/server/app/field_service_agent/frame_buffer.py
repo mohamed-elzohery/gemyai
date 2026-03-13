@@ -40,6 +40,9 @@ _frame_buffers: dict[str, deque[tuple[float, bytes]]] = {}
 # session_id -> base64-encoded annotated JPEG awaiting delivery
 _annotated_images: dict[str, str] = {}
 
+# session_id -> PDF bytes awaiting delivery to the client
+_pending_reports: dict[str, bytes] = {}
+
 
 # ---------------------------------------------------------------------------
 # Frame storage
@@ -139,6 +142,44 @@ def pop_annotated_image(session_id: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Pending-report store (for WebSocket delivery of generated PDFs)
+# ---------------------------------------------------------------------------
+
+
+def store_pending_report(session_id: str, pdf_bytes: bytes) -> None:
+    """Save a generated PDF report for later delivery to the client."""
+    with _lock:
+        _pending_reports[session_id] = pdf_bytes
+    logger.info(
+        "[FrameBuffer] Stored pending report (%d bytes) for session %s",
+        len(pdf_bytes),
+        session_id,
+    )
+
+
+def pop_pending_report(session_id: str) -> bytes | None:
+    """Pop and return the pending PDF report for *session_id*, if any.
+
+    Falls back to any available pending report (handles session-ID
+    mismatch).
+    """
+    with _lock:
+        result = _pending_reports.pop(session_id, None)
+        if result:
+            return result
+        if _pending_reports:
+            fallback_sid, result = _pending_reports.popitem()
+            logger.info(
+                "[FrameBuffer] Pending report session mismatch — "
+                "requested %s, found under %s",
+                session_id,
+                fallback_sid,
+            )
+            return result
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Housekeeping
 # ---------------------------------------------------------------------------
 
@@ -148,4 +189,5 @@ def clear_session(session_id: str) -> None:
     with _lock:
         _frame_buffers.pop(session_id, None)
         _annotated_images.pop(session_id, None)
+        _pending_reports.pop(session_id, None)
     logger.info("[FrameBuffer] Cleared data for session %s", session_id)

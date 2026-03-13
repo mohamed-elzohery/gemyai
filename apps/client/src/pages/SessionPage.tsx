@@ -12,6 +12,7 @@ import type {
   GroundingResultEvent,
   AnnotationFailedEvent,
   WelcomeEvent,
+  ReportReadyEvent,
 } from "../types";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useAudioPlayer } from "../hooks/useAudioPlayer";
@@ -231,6 +232,31 @@ export default function SessionPage() {
           id: randomId(),
           type: "agent-image",
           imageUrl: dataUrl,
+        });
+        return;
+      }
+
+      // --- Report ready (downloadable PDF) ---
+      if (evt.type === "report_ready") {
+        const e = evt as unknown as ReportReadyEvent;
+        if (agentStatusIdRef.current) {
+          removeMessage(agentStatusIdRef.current);
+          agentStatusIdRef.current = null;
+        }
+        // Decode base64 → Blob → Object URL
+        const raw = atob(e.data);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        const blob = new Blob([bytes], {
+          type: e.mimeType || "application/pdf",
+        });
+        const url = URL.createObjectURL(blob);
+        addMessage({
+          id: randomId(),
+          type: "report-attachment",
+          text: "Service Report",
+          downloadUrl: url,
+          filename: e.filename || "fix_report.pdf",
         });
         return;
       }
@@ -536,6 +562,14 @@ export default function SessionPage() {
       imageStreamIntervalRef.current = null;
     }
 
+    // Revoke report blob URLs to free memory
+    setMessages((prev) => {
+      prev.forEach((m) => {
+        if (m.downloadUrl) URL.revokeObjectURL(m.downloadUrl);
+      });
+      return prev;
+    });
+
     navigate("/");
   }, [camera, audioRecorder, vadHook, audioPlayer, navigate]);
 
@@ -642,6 +676,16 @@ export default function SessionPage() {
       // Agent image → show image
       if (msg.type === "agent-image" && msg.imageUrl) {
         return { mode: "image", imageUrl: msg.imageUrl };
+      }
+
+      // Report attachment → show download card
+      if (msg.type === "report-attachment" && msg.downloadUrl) {
+        return {
+          mode: "attachment",
+          text: msg.text,
+          downloadUrl: msg.downloadUrl,
+          filename: msg.filename,
+        };
       }
 
       // Agent status → show thinking

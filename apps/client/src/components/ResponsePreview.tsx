@@ -7,11 +7,13 @@ import type { AgentState } from "./Orb";
 import ImageViewerModal from "./ImageViewerModal";
 
 export interface ResponseState {
-  mode: "idle" | "listening" | "text" | "image" | "thinking";
+  mode: "idle" | "listening" | "text" | "image" | "thinking" | "attachment";
   text?: string;
   imageUrl?: string;
   statusText?: string;
   isPartial?: boolean;
+  downloadUrl?: string;
+  filename?: string;
 }
 
 interface ResponsePreviewProps {
@@ -266,6 +268,83 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
             onClose={() => setImageModalOpen(false)}
           />
         </>
+      )}
+
+      {/* Attachment → Download card */}
+      {response.mode === "attachment" && response.downloadUrl && (
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 3,
+            animation: "imageFadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
+            "@keyframes imageFadeIn": {
+              from: { opacity: 0, transform: "scale(0.92)" },
+              to: { opacity: 1, transform: "scale(1)" },
+            },
+          }}
+        >
+          {/* PDF icon */}
+          <Box
+            sx={{
+              width: 80,
+              height: 80,
+              borderRadius: 3,
+              bgcolor: "error.main",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: 3,
+            }}
+          >
+            <Typography
+              sx={{ color: "#fff", fontWeight: 800, fontSize: "1.4rem" }}
+            >
+              PDF
+            </Typography>
+          </Box>
+
+          <Typography
+            variant="h6"
+            sx={{ color: "text.primary", fontWeight: 600, textAlign: "center" }}
+          >
+            {response.text || "Service Report"}
+          </Typography>
+
+          <Typography
+            variant="body2"
+            sx={{ color: "text.secondary", textAlign: "center", maxWidth: 300 }}
+          >
+            Your report is ready. Tap below to download.
+          </Typography>
+
+          <Box
+            component="a"
+            href={response.downloadUrl}
+            download={response.filename || "fix_report.pdf"}
+            sx={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 1,
+              px: 4,
+              py: 1.5,
+              borderRadius: 2,
+              bgcolor: "primary.main",
+              color: "#fff",
+              fontWeight: 600,
+              fontSize: "1rem",
+              textDecoration: "none",
+              cursor: "pointer",
+              transition: "background-color 0.2s",
+              "&:hover": { bgcolor: "primary.dark" },
+              boxShadow: 2,
+            }}
+          >
+            ↓ Download Report
+          </Box>
+        </Box>
       )}
     </Box>
   );

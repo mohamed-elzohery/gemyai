@@ -27,7 +27,10 @@ load_dotenv(Path(__file__).parent / ".env")
 # pylint: disable=wrong-import-position
 from field_service_agent.agent import agent  # noqa: E402
 from field_service_agent.visual_grounding import get_annotated_image  # noqa: E402
-from field_service_agent.frame_buffer import store_frame  # noqa: E402
+from field_service_agent.frame_buffer import (
+    store_frame,
+    pop_pending_report,
+)  # noqa: E402
 from auth import (  # noqa: E402
     verify_google_token,
     create_jwt,
@@ -67,12 +70,14 @@ _INTERNAL_TOOLS = {
     "annotate_image",
     "capture_frame",
     "google_search",
+    "generate_fix_report",
 }
 
 _TOOL_STATUS_MESSAGES = {
     "annotate_image": "Pointing to the parts...",
     "capture_frame": "Analyzing the camera feed...",
     "google_search": "Searching the web...",
+    "generate_fix_report": "Generating your report...",
 }
 
 # Recovery prompt used after transparent session reconnection (1011 retry).
@@ -627,6 +632,34 @@ async def websocket_endpoint(
                                     )
                                 )
 
+                        # Deliver PDF report on generate_fix_report response
+                        if tool_resp_name == "generate_fix_report":
+                            report_pdf = pop_pending_report(session_id)
+                            if report_pdf:
+                                logger.info(
+                                    "[Report] Delivering PDF report "
+                                    "via downstream (%d bytes)",
+                                    len(report_pdf),
+                                )
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "type": "report_ready",
+                                            "data": base64.b64encode(report_pdf).decode(
+                                                "ascii"
+                                            ),
+                                            "mimeType": "application/pdf",
+                                            "filename": "fix_report.pdf",
+                                        }
+                                    )
+                                )
+                            else:
+                                logger.warning(
+                                    "[Report] generate_fix_report response received "
+                                    "but no pending report for session %s",
+                                    session_id,
+                                )
+
                     # --- 3. Filter thinking / reasoning text ---
                     if part.text and _is_thinking_text(part.text):
                         logger.info(
@@ -684,12 +717,11 @@ async def websocket_endpoint(
                 await websocket.send_text(event_json)
 
     async def image_delivery_task() -> None:
-        """Polls for annotated images and sends them to the client.
+        """Polls for annotated images and pending reports, sends to client.
 
-        Runs independently of the ADK event stream so the image is
-        delivered as soon as the visual-grounding tool produces it,
-        regardless of whether an ADK event happens to be yielded at
-        the right moment.
+        Runs independently of the ADK event stream so deliverables are
+        sent as soon as the tools produce them, regardless of whether
+        an ADK event happens to be yielded at the right moment.
         """
         while True:
             await asyncio.sleep(0.3)
@@ -705,6 +737,24 @@ async def websocket_endpoint(
                             "type": "grounding_result",
                             "image": annotated_b64,
                             "mimeType": "image/jpeg",
+                        }
+                    )
+                )
+
+            # Backup delivery for PDF reports
+            report_pdf = pop_pending_report(session_id)
+            if report_pdf:
+                logger.info(
+                    "[Report] Sending PDF report to client via poll " "(%d bytes)",
+                    len(report_pdf),
+                )
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "report_ready",
+                            "data": base64.b64encode(report_pdf).decode("ascii"),
+                            "mimeType": "application/pdf",
+                            "filename": "fix_report.pdf",
                         }
                     )
                 )

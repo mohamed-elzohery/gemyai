@@ -12,6 +12,7 @@ from google.adk.agents import Agent
 from google.adk.tools import google_search
 
 from .frame_analyzer import capture_frame
+from .report_generator import generate_fix_report
 from .visual_grounding import annotate_image
 
 # ---------------------------------------------------------------------------
@@ -130,8 +131,16 @@ When the repair is complete:
 - Summarise what was done.
 - Ask the technician to verify the equipment is working as expected.
 - If new issues appear, loop back to understanding the new problem.
-- If everything is good, wish them well and let them know you're here
-  if they need anything else.
+- If everything is good, offer to generate a service report:
+  Say something like "Would you like me to generate a service report
+  for this fix?" or "I can put together a report summarising
+  everything we did — want me to go ahead?"
+- If the user agrees, compose a detailed conversation_summary and
+  call `generate_fix_report` (see tool usage below).
+- After the report is generated, let the user know it's ready for
+  download on their device.
+- Then wish them well and let them know you're here if they need
+  anything else.
 
 ### Handling Failures & Retries
 If a repair step fails fundamentally or the diagnosis turns out wrong:
@@ -179,6 +188,27 @@ If a repair step fails fundamentally or the diagnosis turns out wrong:
 - Before searching, say a brief natural sentence like "Let me look
   that up."
 
+### generate_fix_report
+- Use after the repair is verified complete and the user wants a report.
+- Also use if the user explicitly asks for a report at any point.
+- Before calling, say "Let me put that report together for you."
+- You MUST compose a rich `conversation_summary` argument that covers:
+  1. Equipment type, brand, model.
+  2. The problem as described by the user.
+  3. Your diagnosis and reasoning.
+  4. The repair plan you proposed.
+  5. Each step you guided, in order, with the outcome of each step.
+  6. Whether the overall fix was successful.
+  7. Any observations from camera captures that were significant.
+- Write the summary as a natural, detailed narrative — NOT raw JSON,
+  NOT tool names, NOT internal details. Just a professional account
+  of the session.
+- The tool will automatically include relevant images that were
+  captured during the session — you do not need to list them.
+- After the tool returns successfully, tell the user the report is
+  ready for download.
+- If it fails, apologise and offer to try again.
+
 ## SPEED
 Be fast and efficient. Do not pause or hesitate. Ask your question and
 listen. No unnecessary filler phrases. Keep the conversation moving.
@@ -191,6 +221,6 @@ agent = Agent(
     name="field_service_agent",
     model=NATIVE_AUDIO_MODEL,
     description="Gemy — AI field-service assistant for equipment troubleshooting and repair.",
-    tools=[google_search, capture_frame, annotate_image],
+    tools=[google_search, capture_frame, annotate_image, generate_fix_report],
     instruction=_INSTRUCTION,
 )

@@ -56,6 +56,20 @@ export interface WelcomeEvent {
     text: string;
 }
 
+export interface ReportReadyEvent {
+    type: "report_ready";
+    data: string; // base64
+    mimeType: string;
+    filename: string;
+}
+
+export interface ReportReadyEvent {
+    type: "report_ready";
+    data: string; // base64
+    mimeType: string;
+    filename: string;
+}
+
 export interface InlineData {
     mimeType: string;
     data: string; // base64
@@ -100,6 +114,7 @@ export type DownstreamEvent =
     | ToolCompleteEvent
     | AnnotationFailedEvent
     | WelcomeEvent
+    | ReportReadyEvent
     | AdkEvent;
 
 // ---------- Chat messages (UI state) ----------
@@ -113,7 +128,9 @@ export type ChatMessageType =
     | "agent-status"
     | "grounding-loading"
     | "input-transcription"
-    | "output-transcription";
+    | "output-transcription"
+    | "report-attachment";
+    | "report-attachment";
 
 export interface ChatMessage {
     id: string;
@@ -122,6 +139,8 @@ export interface ChatMessage {
     imageUrl?: string;
     isPartial?: boolean;
     isInterrupted?: boolean;
+    downloadUrl?: string;
+    filename?: string;
 }
 
 // ---------- Console entries ----------
