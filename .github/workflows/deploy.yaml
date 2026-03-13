@@ -1,0 +1,106 @@
+# ============================================================
+# GemyAI — Deploy to Cloud Run on push to main
+# ============================================================
+# Prerequisites (one-time setup):
+#   1. Run scripts/setup-github-actions-iam.sh to create the
+#      Workload Identity Federation pool/provider and deployer SA.
+#   2. Add these GitHub repo secrets (Settings → Secrets → Actions):
+#        GCP_PROJECT_ID           = gemy-ai
+#        GCP_WIF_PROVIDER         = projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider
+#        GCP_SERVICE_ACCOUNT      = github-deployer@gemy-ai.iam.gserviceaccount.com
+#        VITE_GOOGLE_CLIENT_ID    = <your Google OAuth client ID>
+# ============================================================
+
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+
+# Prevent concurrent deploys — queue them serially
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: gemy-ai
+  REGION: us-central1
+  SERVICE_NAME: gemyai
+  REPO_NAME: gemyai
+  IMAGE: us-central1-docker.pkg.dev/gemy-ai/gemyai/app
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    # Required for Workload Identity Federation (id-token: write)
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Authenticate to GCP (keyless via WIF) ───────────
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # ── 3. Set up Cloud SDK ─────────────────────────────────
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── 4. Configure Docker for Artifact Registry ──────────
+      - name: Configure Docker credentials
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      # ── 5. Build Docker image ──────────────────────────────
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }} \
+            -t ${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.IMAGE }}:latest \
+            .
+
+      # ── 6. Push Docker image ───────────────────────────────
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      # ── 7. Deploy to Cloud Run ─────────────────────────────
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.IMAGE }}:${{ github.sha }} \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8080 \
+            --min-instances 0 \
+            --max-instances 1 \
+            --memory 1Gi \
+            --cpu 1 \
+            --timeout 3600 \
+            --session-affinity \
+            --set-env-vars "GOOGLE_GENAI_USE_VERTEXAI=FALSE,GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }},GOOGLE_CLOUD_LOCATION=${{ env.REGION }},ENVIRONMENT=production" \
+            --set-secrets "JWT_SECRET=jwt-secret:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest,GOOGLE_API_KEY=google-api-key:latest"
+
+      # ── 8. Show deployment URL ─────────────────────────────
+      - name: Get service URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region ${{ env.REGION }} \
+            --format="value(status.url)")
+          echo "## Deployed successfully! :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service URL:** ${URL}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.IMAGE }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

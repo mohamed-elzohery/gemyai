@@ -92,6 +92,7 @@ create_secret_from_file() {
 create_secret "jwt-secret" "JWT signing secret for session cookies"
 create_secret "google-oauth-client-id" "Google OAuth Client ID"
 create_secret "google-oauth-client-secret" "Google OAuth Client Secret"
+create_secret "google-api-key" "Google Gemini API key (used by the AI agent)"
 create_secret_from_file "firebase-service-account" "path to Firebase service account JSON file (e.g. apps/server/app/gemy-ai-firebase-adminsdk-fbsvc-c72ce2dd45.json)"
 
 # ── Step 5: IAM — Grant roles ───────────────────────────────

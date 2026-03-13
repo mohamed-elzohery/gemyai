@@ -34,8 +34,9 @@ export function useAudioRecorder() {
             "pcm-recorder-processor",
         );
 
-        // Start disconnected — VAD will call resume() on speech start
-        // (source is NOT connected to node yet)
+        // Stream audio continuously
+        source.connect(node);
+
         node.port.onmessage = (event: MessageEvent) => {
             const pcmData = convertFloat32ToPCM(event.data);
             onPCM(pcmData);
@@ -45,27 +46,7 @@ export function useAudioRecorder() {
         nodeRef.current = node;
         ctxRef.current = audioRecorderContext;
         streamRef.current = micStream;
-        pausedRef.current = true;
-    }, []);
-
-    /** Disconnect source → worklet so no PCM data is produced. */
-    const pause = useCallback(() => {
-        if (pausedRef.current) return;
-        try {
-            sourceRef.current?.disconnect();
-        } catch { /* already disconnected */ }
-        pausedRef.current = true;
-        console.log("[AudioRecorder] paused — source disconnected");
-    }, []);
-
-    /** Reconnect source → worklet so PCM data flows again. */
-    const resume = useCallback(() => {
-        if (!pausedRef.current) return;
-        if (sourceRef.current && nodeRef.current) {
-            sourceRef.current.connect(nodeRef.current);
-            pausedRef.current = false;
-            console.log("[AudioRecorder] resumed — source connected");
-        }
+        pausedRef.current = false;
     }, []);
 
     /** Stop the microphone. */
@@ -73,5 +54,5 @@ export function useAudioRecorder() {
         streamRef.current?.getTracks().forEach((t) => t.stop());
     }, []);
 
-    return { init, pause, resume, stopMic, streamRef };
+    return { init, stopMic };
 }

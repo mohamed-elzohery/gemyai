@@ -318,11 +318,6 @@ async def websocket_endpoint(
             response_modalities=response_modalities,
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
-            realtime_input_config=types.RealtimeInputConfig(
-                automatic_activity_detection=types.AutomaticActivityDetection(
-                    disabled=True
-                )
-            ),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -344,11 +339,6 @@ async def websocket_endpoint(
             response_modalities=response_modalities,
             input_audio_transcription=None,
             output_audio_transcription=None,
-            realtime_input_config=types.RealtimeInputConfig(
-                automatic_activity_detection=types.AutomaticActivityDetection(
-                    disabled=True
-                )
-            ),
         )
         # Warn if user tried to enable native-audio-only features
         if proactivity or affective_dialog:
@@ -436,17 +426,8 @@ async def websocket_endpoint(
                 text_data = message["text"]
                 json_message = json.loads(text_data)
 
-                # Handle activity signals (client-side VAD)
-                if json_message.get("type") == "activity_start":
-                    logger.info("[Upstream] ▲ activity_start")
-                    live_request_queue.send_activity_start()
-
-                elif json_message.get("type") == "activity_end":
-                    logger.info("[Upstream] ▲ activity_end")
-                    live_request_queue.send_activity_end()
-
                 # Extract text from JSON and send to LiveRequestQueue
-                elif json_message.get("type") == "text":
+                if json_message.get("type") == "text":
                     logger.info("[Upstream] ▲ text: %s", json_message["text"][:120])
                     content = types.Content(
                         parts=[types.Part(text=json_message["text"])]
@@ -570,17 +551,16 @@ async def websocket_endpoint(
                                 }
                             )
                         )
-                        skip_event = True
+                        # We no longer skip_event here so spoken text in the same event is not lost.
 
                     # --- 2. Intercept function_response events ---
                     if (
                         part.function_response
                         and part.function_response.name in _INTERNAL_TOOLS
                     ):
-                        skip_event = True
                         tool_resp_name = part.function_response.name
                         logger.info(
-                            "[Downstream] Skipped function_response for %s",
+                            "[Downstream] Detected function_response for %s",
                             tool_resp_name,
                         )
 
@@ -716,53 +696,10 @@ async def websocket_endpoint(
                     logger.info("[Downstream] ▼ (raw event)")
                 await websocket.send_text(event_json)
 
-    async def image_delivery_task() -> None:
-        """Polls for annotated images and pending reports, sends to client.
-
-        Runs independently of the ADK event stream so deliverables are
-        sent as soon as the tools produce them, regardless of whether
-        an ADK event happens to be yielded at the right moment.
-        """
-        while True:
-            await asyncio.sleep(0.3)
-            annotated_b64 = get_annotated_image(session_id)
-            if annotated_b64:
-                logger.info(
-                    "[Annotation] Sending annotated image to client " "(%d chars b64)",
-                    len(annotated_b64),
-                )
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "grounding_result",
-                            "image": annotated_b64,
-                            "mimeType": "image/jpeg",
-                        }
-                    )
-                )
-
-            # Backup delivery for PDF reports
-            report_pdf = pop_pending_report(session_id)
-            if report_pdf:
-                logger.info(
-                    "[Report] Sending PDF report to client via poll " "(%d bytes)",
-                    len(report_pdf),
-                )
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "report_ready",
-                            "data": base64.b64encode(report_pdf).decode("ascii"),
-                            "mimeType": "application/pdf",
-                            "filename": "fix_report.pdf",
-                        }
-                    )
-                )
-
     # Run both tasks concurrently
     # Exceptions from either task will propagate and cancel the other task
     try:
-        await asyncio.gather(upstream_task(), downstream_task(), image_delivery_task())
+        await asyncio.gather(upstream_task(), downstream_task())
     except WebSocketDisconnect:
         logger.debug("Client disconnected normally")
     except Exception as e:

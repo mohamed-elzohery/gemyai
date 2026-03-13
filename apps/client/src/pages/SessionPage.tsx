@@ -18,7 +18,6 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import { useAudioPlayer } from "../hooks/useAudioPlayer";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { useCamera } from "../hooks/useCamera";
-import { useVAD } from "../hooks/useVAD";
 import { base64ToArray } from "../utils/audio";
 import { cleanCJKSpaces, randomId } from "../utils/textHelpers";
 import { useAuth } from "../contexts/AuthContext";
@@ -42,6 +41,9 @@ export default function SessionPage() {
   const [sessionStarted, setSessionStarted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const isSpeakingRef = useRef(false);
+  const isSpeakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const isAudioRef = useRef(false);
 
   // ---- Controls state ----
@@ -106,40 +108,6 @@ export default function SessionPage() {
       mimeType: "image/jpeg",
     });
   }, [camera]);
-
-  // ---- VAD callbacks ----
-  const handleSpeechStart = useCallback(() => {
-    console.log("[VAD] Speech START — interrupting agent audio");
-    isSpeakingRef.current = true;
-    setIsSpeaking(true);
-
-    // Immediately stop agent audio playback so the user can speak
-    audioPlayer.stop();
-
-    // Resume audio stream so PCM data flows to the server
-    audioRecorder.resume();
-
-    sendJsonRef.current({ type: "activity_start" });
-  }, [audioRecorder, audioPlayer]);
-
-  const handleSpeechEnd = useCallback(
-    (_audio: Float32Array) => {
-      console.log("[VAD] Speech END");
-      isSpeakingRef.current = false;
-      setIsSpeaking(false);
-
-      // Pause audio stream so no PCM data flows while user is silent
-      audioRecorder.pause();
-
-      sendJsonRef.current({ type: "activity_end" });
-    },
-    [audioRecorder],
-  );
-
-  const vadHook = useVAD({
-    onSpeechStart: handleSpeechStart,
-    onSpeechEnd: handleSpeechEnd,
-  });
 
   // ---- WebSocket message handler ----
   const handleWsMessage = useCallback(
@@ -319,6 +287,25 @@ export default function SessionPage() {
       if (adkEvent.inputTranscription?.text) {
         const txt = adkEvent.inputTranscription.text;
         const finished = adkEvent.inputTranscription.finished;
+
+        // Mark as speaking while partial
+        if (!finished) {
+          isSpeakingRef.current = true;
+          setIsSpeaking(true);
+          // immediately stop audio playback when user starts speaking
+          audioPlayer.stop();
+          if (isSpeakingTimeoutRef.current)
+            clearTimeout(isSpeakingTimeoutRef.current);
+          isSpeakingTimeoutRef.current = setTimeout(() => {
+            isSpeakingRef.current = false;
+            setIsSpeaking(false);
+          }, 1500); // 1.5 seconds timeout
+        } else {
+          isSpeakingRef.current = false;
+          setIsSpeaking(false);
+          if (isSpeakingTimeoutRef.current)
+            clearTimeout(isSpeakingTimeoutRef.current);
+        }
 
         const nonLatin = txt.match(
           /[^\u0000-\u007F\u00C0-\u024F\s.,!?'"():\d-]/g,
@@ -504,10 +491,10 @@ export default function SessionPage() {
   // Keep sendJsonRef in sync
   sendJsonRef.current = ws.sendJson;
 
-  // ---- Audio recorder handler (VAD-gated) ----
+  // ---- Audio recorder handler ----
   const audioRecorderHandler = useCallback(
     (pcmData: ArrayBuffer) => {
-      if (isAudioRef.current && isSpeakingRef.current && micOn) {
+      if (isAudioRef.current && micOn) {
         ws.sendBinary(pcmData);
       }
     },
@@ -523,7 +510,6 @@ export default function SessionPage() {
       if (videoEl) await camera.init(videoEl);
       await audioPlayer.init();
       await audioRecorder.init(audioRecorderHandler);
-      await vadHook.init();
 
       isAudioRef.current = true;
       setSessionStarted(true);
@@ -545,7 +531,6 @@ export default function SessionPage() {
     audioPlayer,
     audioRecorder,
     audioRecorderHandler,
-    vadHook,
     captureAndSendSnapshot,
   ]);
 
@@ -553,7 +538,6 @@ export default function SessionPage() {
   const endSession = useCallback(() => {
     camera.stop();
     audioRecorder.stopMic();
-    vadHook.destroy();
     audioPlayer.stop();
     isAudioRef.current = false;
 
@@ -571,7 +555,7 @@ export default function SessionPage() {
     });
 
     navigate("/");
-  }, [camera, audioRecorder, vadHook, audioPlayer, navigate]);
+  }, [camera, audioRecorder, audioPlayer, navigate]);
 
   // ---- Auto-start session on mount ----
   const sessionInitRef = useRef(false);
@@ -669,50 +653,66 @@ export default function SessionPage() {
       return { mode: "idle" };
     }
 
-    // Find the latest relevant message (from the end)
+    // First check for active agent status / loading
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.type === "agent-status" || msg.type === "grounding-loading") {
+        return { mode: "thinking", statusText: msg.text };
+      }
+      // Stop checking if we hit a recent input boundary
+      if (
+        msg.type === "input-transcription" ||
+        msg.type === "output-transcription" ||
+        msg.type === "agent-text"
+      ) {
+        break;
+      }
+    }
+
+    // Check for images or attachments in current turn
+    let latestImage = null;
+    let latestAttachment = null;
+    let latestText = null;
+
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
 
-      // Agent image → show image
-      if (msg.type === "agent-image" && msg.imageUrl) {
-        return { mode: "image", imageUrl: msg.imageUrl };
+      // Stop looking at previous turns if we hit a completed input transcription
+      if (msg.type === "input-transcription") {
+        if (msg.isPartial) return { mode: "listening" };
+        break;
       }
 
-      // Report attachment → show download card
-      if (msg.type === "report-attachment" && msg.downloadUrl) {
-        return {
-          mode: "attachment",
-          text: msg.text,
-          downloadUrl: msg.downloadUrl,
-          filename: msg.filename,
-        };
-      }
-
-      // Agent status → show thinking
-      if (msg.type === "agent-status") {
-        return { mode: "thinking", statusText: msg.text };
-      }
-
-      // Grounding loading → show thinking
-      if (msg.type === "grounding-loading") {
-        return { mode: "thinking", statusText: msg.text };
-      }
-
-      // Agent text → show text streaming
-      if (msg.type === "agent-text" && msg.text) {
-        return { mode: "text", text: msg.text, isPartial: msg.isPartial };
-      }
-
-      // Output transcription → show text
-      if (msg.type === "output-transcription" && msg.text) {
-        return { mode: "text", text: msg.text, isPartial: msg.isPartial };
-      }
-
-      // Input transcription → show listening (user is talking)
-      if (msg.type === "input-transcription" && msg.isPartial) {
-        return { mode: "listening" };
-      }
+      if (!latestImage && msg.type === "agent-image" && msg.imageUrl)
+        latestImage = msg;
+      if (
+        !latestAttachment &&
+        msg.type === "report-attachment" &&
+        msg.downloadUrl
+      )
+        latestAttachment = msg;
+      if (
+        !latestText &&
+        (msg.type === "agent-text" || msg.type === "output-transcription") &&
+        msg.text
+      )
+        latestText = msg;
     }
+
+    if (latestImage) return { mode: "image", imageUrl: latestImage.imageUrl };
+    if (latestAttachment)
+      return {
+        mode: "attachment",
+        text: latestAttachment.text,
+        downloadUrl: latestAttachment.downloadUrl,
+        filename: latestAttachment.filename,
+      };
+    if (latestText)
+      return {
+        mode: "text",
+        text: latestText.text,
+        isPartial: latestText.isPartial,
+      };
 
     // If user is speaking (VAD detected), show listening
     if (isSpeaking) {

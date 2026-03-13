@@ -38,9 +38,6 @@ importers:
       '@react-three/fiber':
         specifier: ^9.5.0
         version: 9.5.0(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(three@0.183.2)
-      '@ricky0123/vad-web':
-        specifier: ^0.0.29
-        version: 0.0.29
       onnxruntime-web:
         specifier: ^1.22.0
         version: 1.24.2
@@ -572,9 +569,6 @@ packages:
         optional: true
       react-native:
         optional: true
-
-  '@ricky0123/vad-web@0.0.29':
-    resolution: {integrity: sha512-natq2FfiEdCv2LcXpmA+U5+wz7QoPgOe2QcwcehUIcFSfZrRnJVAC5H4MCL5Z2xOp7QK6nz53y/tyJLWFVx6TA==}
 
   '@rolldown/pluginutils@1.0.0-beta.27':
     resolution: {integrity: sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==}
@@ -1847,10 +1841,6 @@ snapshots:
     transitivePeerDependencies:
       - '@types/react'
       - immer
-
-  '@ricky0123/vad-web@0.0.29':
-    dependencies:
-      onnxruntime-web: 1.24.2
 
   '@rolldown/pluginutils@1.0.0-beta.27': {}
 
