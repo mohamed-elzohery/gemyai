@@ -5,9 +5,14 @@ import { glassCardSx } from "../theme";
 
 interface CameraPreviewProps {
   visible: boolean;
+  /** Whether the camera stream is actually playing (prevents black flash) */
+  ready?: boolean;
 }
 
-export default function CameraPreview({ visible }: CameraPreviewProps) {
+export default function CameraPreview({
+  visible,
+  ready = true,
+}: CameraPreviewProps) {
   return (
     <Box
       sx={[
@@ -22,6 +27,13 @@ export default function CameraPreview({ visible }: CameraPreviewProps) {
           transition:
             "flex 0.4s ease, max-height 0.4s ease, max-width 0.4s ease, min-width 0.4s ease, opacity 0.35s ease, padding 0.4s ease, margin 0.4s ease",
         },
+        /* Mobile (xs): 1/3 of parent when visible */
+        visible
+          ? {
+              flex: { xs: "1 1 0", lg: "unset" },
+              minHeight: { xs: 0, lg: "auto" },
+            }
+          : {},
         /* Desktop (lg): 1/3 width, stretch vertically */
         (theme) => ({
           [theme.breakpoints.up("lg")]: {
@@ -64,6 +76,9 @@ export default function CameraPreview({ visible }: CameraPreviewProps) {
           transform: "scaleX(-1)",
           height: { xs: "auto", lg: "100%" },
           objectFit: { xs: "contain", lg: "cover" },
+          /* Fade in once stream is ready — prevents black flash */
+          opacity: ready ? 1 : 0,
+          transition: "opacity 0.3s ease",
         }}
       />
 

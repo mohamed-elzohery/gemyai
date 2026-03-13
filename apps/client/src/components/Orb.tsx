@@ -1,8 +1,6 @@
 /**
- * Orb component — ported from ElevenLabs examples, adapted for our MUI design system.
+ * Orb component — custom WebGL shader orb with 3 agent states.
  * Uses Three.js (react-three-fiber + drei) with WebGL shaders.
- *
- * @see https://github.com/elevenlabs/elevenlabs-examples/blob/main/examples/conversational-ai/nextjs/components/ui/orb.tsx
  */
 
 import { useEffect, useMemo, useRef } from "react";
@@ -15,15 +13,24 @@ import Box from "@mui/material/Box";
 // Types
 // ---------------------------------------------------------------------------
 
-export type AgentState = null | "listening";
+export type AgentState = null | "listening" | "talking";
 
-interface OrbProps {
+type OrbProps = {
   colors?: [string, string];
+  colorsRef?: React.RefObject<[string, string]>;
+  resizeDebounce?: number;
   seed?: number;
   agentState?: AgentState;
+  volumeMode?: "auto" | "manual";
+  manualInput?: number;
+  manualOutput?: number;
+  inputVolumeRef?: React.RefObject<number>;
+  outputVolumeRef?: React.RefObject<number>;
+  getInputVolume?: () => number;
+  getOutputVolume?: () => number;
   /** CSS width/height override – defaults to 100% of parent */
   size?: number | string;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Public component
@@ -31,8 +38,17 @@ interface OrbProps {
 
 export default function Orb({
   colors = ["#90CAF9", "#42A5F5"],
+  colorsRef,
+  resizeDebounce = 100,
   seed,
   agentState = null,
+  volumeMode = "auto",
+  manualInput,
+  manualOutput,
+  inputVolumeRef,
+  outputVolumeRef,
+  getInputVolume,
+  getOutputVolume,
   size,
 }: OrbProps) {
   return (
@@ -44,10 +60,26 @@ export default function Orb({
       }}
     >
       <Canvas
-        resize={{ debounce: 100 }}
-        gl={{ alpha: true, antialias: true, premultipliedAlpha: true }}
+        resize={{ debounce: resizeDebounce }}
+        gl={{
+          alpha: true,
+          antialias: true,
+          premultipliedAlpha: true,
+        }}
       >
-        <Scene colors={colors} seed={seed} agentState={agentState} />
+        <Scene
+          colors={colors}
+          colorsRef={colorsRef}
+          seed={seed}
+          agentState={agentState}
+          volumeMode={volumeMode}
+          manualInput={manualInput}
+          manualOutput={manualOutput}
+          inputVolumeRef={inputVolumeRef}
+          outputVolumeRef={outputVolumeRef}
+          getInputVolume={getInputVolume}
+          getOutputVolume={getOutputVolume}
+        />
       </Canvas>
     </Box>
   );
@@ -59,12 +91,28 @@ export default function Orb({
 
 function Scene({
   colors,
+  colorsRef,
   seed,
   agentState,
+  volumeMode,
+  manualInput,
+  manualOutput,
+  inputVolumeRef,
+  outputVolumeRef,
+  getInputVolume,
+  getOutputVolume,
 }: {
   colors: [string, string];
+  colorsRef?: React.RefObject<[string, string]>;
   seed?: number;
   agentState: AgentState;
+  volumeMode: "auto" | "manual";
+  manualInput?: number;
+  manualOutput?: number;
+  inputVolumeRef?: React.RefObject<number>;
+  outputVolumeRef?: React.RefObject<number>;
+  getInputVolume?: () => number;
+  getOutputVolume?: () => number;
 }) {
   const { gl } = useThree();
   const circleRef =
@@ -78,6 +126,9 @@ function Scene({
   );
 
   const agentRef = useRef<AgentState>(agentState);
+  const modeRef = useRef<"auto" | "manual">(volumeMode);
+  const manualInRef = useRef<number>(manualInput ?? 0);
+  const manualOutRef = useRef<number>(manualOutput ?? 0);
   const curInRef = useRef(0);
   const curOutRef = useRef(0);
 
@@ -86,9 +137,20 @@ function Scene({
   }, [agentState]);
 
   useEffect(() => {
-    targetColor1Ref.current = new THREE.Color(colors[0]);
-    targetColor2Ref.current = new THREE.Color(colors[1]);
-  }, [colors]);
+    modeRef.current = volumeMode;
+  }, [volumeMode]);
+
+  useEffect(() => {
+    manualInRef.current = clamp01(
+      manualInput ?? inputVolumeRef?.current ?? getInputVolume?.() ?? 0,
+    );
+  }, [manualInput, inputVolumeRef, getInputVolume]);
+
+  useEffect(() => {
+    manualOutRef.current = clamp01(
+      manualOutput ?? outputVolumeRef?.current ?? getOutputVolume?.() ?? 0,
+    );
+  }, [manualOutput, outputVolumeRef, getOutputVolume]);
 
   const random = useMemo(
     () => splitmix32(seed ?? Math.floor(Math.random() * 2 ** 32)),
@@ -100,42 +162,47 @@ function Scene({
     [random],
   );
 
-  // WebGL context loss recovery
   useEffect(() => {
-    const canvas = gl.domElement;
-    const onContextLost = (event: Event) => {
-      event.preventDefault();
-      setTimeout(() => gl.forceContextRestore(), 1);
-    };
-    canvas.addEventListener("webglcontextlost", onContextLost, false);
-    return () =>
-      canvas.removeEventListener("webglcontextlost", onContextLost, false);
-  }, [gl]);
+    targetColor1Ref.current = new THREE.Color(colors[0]);
+    targetColor2Ref.current = new THREE.Color(colors[1]);
+  }, [colors]);
 
-  // Per-frame animation
   useFrame((_, delta: number) => {
     const mat = circleRef.current?.material;
     if (!mat) return;
+    const live = colorsRef?.current;
+    if (live) {
+      if (live[0]) targetColor1Ref.current.set(live[0]);
+      if (live[1]) targetColor2Ref.current.set(live[1]);
+    }
     const u = mat.uniforms;
-
     u.uTime.value += delta * 0.5;
 
-    // Fade in
     if (u.uOpacity.value < 1) {
       u.uOpacity.value = Math.min(1, u.uOpacity.value + delta * 2);
     }
 
-    const t = u.uTime.value * 2;
     let targetIn = 0;
     let targetOut = 0.3;
-
-    if (agentRef.current === "listening") {
-      targetIn = clamp01(0.55 + Math.sin(t * 3.2) * 0.35);
-      targetOut = 0.45;
+    if (modeRef.current === "manual") {
+      targetIn = clamp01(
+        manualInput ?? inputVolumeRef?.current ?? getInputVolume?.() ?? 0,
+      );
+      targetOut = clamp01(
+        manualOutput ?? outputVolumeRef?.current ?? getOutputVolume?.() ?? 0,
+      );
     } else {
-      // idle
-      targetIn = 0;
-      targetOut = 0.3;
+      const t = u.uTime.value * 2;
+      if (agentRef.current === null) {
+        targetIn = 0;
+        targetOut = 0.3;
+      } else if (agentRef.current === "listening") {
+        targetIn = clamp01(0.55 + Math.sin(t * 3.2) * 0.35);
+        targetOut = 0.45;
+      } else if (agentRef.current === "talking") {
+        targetIn = clamp01(0.65 + Math.sin(t * 4.8) * 0.22);
+        targetOut = clamp01(0.75 + Math.sin(t * 3.6) * 0.22);
+      }
     }
 
     curInRef.current += (targetIn - curInRef.current) * 0.2;
@@ -151,7 +218,19 @@ function Scene({
     u.uColor2.value.lerp(targetColor2Ref.current, 0.08);
   });
 
-  // Uniforms
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const onContextLost = (event: Event) => {
+      event.preventDefault();
+      setTimeout(() => {
+        gl.forceContextRestore();
+      }, 1);
+    };
+    canvas.addEventListener("webglcontextlost", onContextLost, false);
+    return () =>
+      canvas.removeEventListener("webglcontextlost", onContextLost, false);
+  }, [gl]);
+
   const uniforms = useMemo(() => {
     perlinNoiseTexture.wrapS = THREE.RepeatWrapping;
     perlinNoiseTexture.wrapT = THREE.RepeatWrapping;
@@ -162,7 +241,7 @@ function Scene({
       uPerlinTexture: new THREE.Uniform(perlinNoiseTexture),
       uTime: new THREE.Uniform(0),
       uAnimation: new THREE.Uniform(0.1),
-      uInverted: new THREE.Uniform(0),
+      uInverted: new THREE.Uniform(1), // always dark theme
       uInputVolume: new THREE.Uniform(0),
       uOutputVolume: new THREE.Uniform(0),
       uOpacity: new THREE.Uniform(0),
@@ -233,6 +312,7 @@ varying vec2 vUv;
 
 const float PI = 3.14159265358979323846;
 
+// Draw a single oval with soft edges and calculate its gradient color
 bool drawOval(vec2 polarUv, vec2 polarCenter, float a, float b, bool reverseGradient, float softness, out vec4 color) {
     vec2 p = polarUv - polarCenter;
     float oval = (p.x * p.x) / (a * a) + (p.y * p.y) / (b * b);
@@ -241,12 +321,15 @@ bool drawOval(vec2 polarUv, vec2 polarCenter, float a, float b, bool reverseGrad
 
     if (edge > 0.0) {
         float gradient = reverseGradient ? (1.0 - (p.x / a + 1.0) / 2.0) : ((p.x / a + 1.0) / 2.0);
-        color = vec4(vec3(gradient), 0.8 * edge);
+        // Flatten gradient toward middle value for more uniform appearance
+        gradient = mix(0.5, gradient, 0.1);
+        color = vec4(vec3(gradient), 0.85 * edge);
         return true;
     }
     return false;
 }
 
+// Map grayscale value to a 4-color ramp (color1, color2, color3, color4)
 vec3 colorRamp(float grayscale, vec3 color1, vec3 color2, vec3 color3, vec3 color4) {
     if (grayscale < 0.33) {
         return mix(color1, color2, grayscale * 3.0);
@@ -261,10 +344,11 @@ vec2 hash2(vec2 p) {
     return fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))) * 43758.5453);
 }
 
+// 2D noise for the ring
 float noise2D(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
-
+    
     vec2 u = f * f * (3.0 - 2.0 * f);
     float n = mix(
         mix(dot(hash2(i + vec2(0.0, 0.0)), f - vec2(0.0, 0.0)),
@@ -279,7 +363,7 @@ float noise2D(vec2 p) {
 
 float sharpRing(vec3 decomposed, float time) {
     float ringStart = 1.0;
-    float ringWidth = 0.5;
+    float ringWidth = 0.3;
     float noiseScale = 5.0;
 
     float noise = mix(
@@ -288,14 +372,14 @@ float sharpRing(vec3 decomposed, float time) {
         decomposed.z
     );
 
-    noise = (noise - 0.5) * 4.0;
+    noise = (noise - 0.5) * 2.5;
 
     return ringStart + noise * ringWidth * 1.5;
 }
 
 float smoothRing(vec3 decomposed, float time) {
     float ringStart = 0.9;
-    float ringWidth = 0.3;
+    float ringWidth = 0.2;
     float noiseScale = 6.0;
 
     float noise = mix(
@@ -304,7 +388,7 @@ float smoothRing(vec3 decomposed, float time) {
         decomposed.z
     );
 
-    noise = (noise - 0.5) * 8.0;
+    noise = (noise - 0.5) * 5.0;
 
     return ringStart + noise * ringWidth;
 }
@@ -318,23 +402,29 @@ float flow(vec3 decomposed, float time) {
 }
 
 void main() {
+    // Normalize vUv to be centered around (0.0, 0.0)
     vec2 uv = vUv * 2.0 - 1.0;
 
+    // Convert uv to polar coordinates
     float radius = length(uv);
     float theta = atan(uv.y, uv.x);
     if (theta < 0.0) theta += 2.0 * PI;
 
+    // Decomposed angle for seamless noise sampling
     vec3 decomposed = vec3(
         theta / (2.0 * PI),
         mod(theta / (2.0 * PI) + 0.5, 1.0) + 1.0,
         abs(theta / PI - 1.0)
     );
 
+    // Add noise to the angle for a flow-like distortion
     float noise = flow(decomposed, radius * 0.03 - uAnimation * 0.2) - 0.5;
-    theta += noise * mix(0.5, 1.0, uOutputVolume);
+    theta += noise * mix(0.08, 0.25, uOutputVolume);
 
+    // Initialize the base color to white
     vec4 color = vec4(1.0, 1.0, 1.0, 1.0);
 
+    // Oval parameters in polar coordinates
     float originalCenters[7] = float[7](0.0, 0.5 * PI, 1.0 * PI, 1.5 * PI, 2.0 * PI, 2.5 * PI, 3.0 * PI);
 
     float centers[7];
@@ -347,8 +437,8 @@ void main() {
 
     for (int i = 0; i < 7; i++) {
         float noise = texture(uPerlinTexture, vec2(mod(centers[i] + uTime * 0.05, 1.0), 0.5)).r;
-        a = 0.5 + noise * 0.5;
-        b = noise * mix(4.5, 3.0, uInputVolume);
+        a = 0.5 + noise * 0.3;
+        b = noise * mix(3.5, 2.5, uInputVolume);
         bool reverseGradient = (i % 2 == 1);
 
         float distTheta = min(
@@ -360,27 +450,29 @@ void main() {
         );
         float distRadius = radius;
 
-        float softness = 0.4;
+        float softness = 0.6;
 
         if (drawOval(vec2(distTheta, distRadius), vec2(0.0, 0.0), a, b, reverseGradient, softness, ovalColor)) {
             color.rgb = mix(color.rgb, ovalColor.rgb, ovalColor.a);
             color.a = max(color.a, ovalColor.a);
         }
     }
-
+    
+    // Calculate both noisy rings
     float ringRadius1 = sharpRing(decomposed, uTime * 0.1);
     float ringRadius2 = smoothRing(decomposed, uTime * 0.1);
-
-    float inputRadius1 = radius + uInputVolume * 0.3;
-    float inputRadius2 = radius + uInputVolume * 0.2;
-    float opacity1 = mix(0.3, 0.8, uInputVolume);
-    float opacity2 = mix(0.25, 0.6, uInputVolume);
+    
+    // Adjust rings based on input volume
+    float inputRadius1 = radius + uInputVolume * 0.2;
+    float inputRadius2 = radius + uInputVolume * 0.15;
+    float opacity1 = mix(0.2, 0.6, uInputVolume);
+    float opacity2 = mix(0.15, 0.45, uInputVolume);
 
     float ringAlpha1 = (inputRadius2 >= ringRadius1) ? opacity1 : 0.0;
     float ringAlpha2 = smoothstep(ringRadius2 - 0.05, ringRadius2 + 0.05, inputRadius1) * opacity2;
-
+    
     float totalRingAlpha = max(ringAlpha1, ringAlpha2);
-
+    
     vec3 ringColor = vec3(1.0);
     color.rgb = 1.0 - (1.0 - color.rgb) * (1.0 - ringColor * totalRingAlpha);
 

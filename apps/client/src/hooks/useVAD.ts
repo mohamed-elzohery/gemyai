@@ -4,10 +4,10 @@ import { MicVAD } from "@ricky0123/vad-web";
 // ---------------------------------------------------------------------------
 // Configuration — tune these to match your speech detection preferences
 // ---------------------------------------------------------------------------
-const POSITIVE_SPEECH_THRESHOLD = 0.5;
-const NEGATIVE_SPEECH_THRESHOLD = 0.35;
-const REDEMPTION_MS = 700; // ms of silence before firing onSpeechEnd
-const MIN_SPEECH_MS = 100; // minimum speech duration to avoid misfires
+const POSITIVE_SPEECH_THRESHOLD = 0.8;
+const NEGATIVE_SPEECH_THRESHOLD = 0.6;
+const REDEMPTION_MS = 1200; // ms of silence before firing onSpeechEnd
+const MIN_SPEECH_MS = 400; // minimum speech duration to avoid misfires
 // ---------------------------------------------------------------------------
 
 interface UseVADOptions {

@@ -51,6 +51,9 @@ export default function SessionPage() {
   const [micOn, setMicOn] = useState(true);
   const [previewVisible, setPreviewVisible] = useState(true);
 
+  // ---- Camera ready (prevents black flash on first mount) ----
+  const [cameraReady, setCameraReady] = useState(false);
+
   // ---- Confirm dialog ----
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -90,10 +93,22 @@ export default function SessionPage() {
   const audioRecorder = useAudioRecorder();
   const camera = useCamera();
 
+  // ---- Debounce timer for speech-end to prevent orb flicker ----
+  const speechEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
   // ---- VAD: client-side Silero voice activity detection ----
   const vad = useVAD({
     onSpeechStart: () => {
       console.log("[VAD] Speech START");
+
+      // Cancel any pending speech-end debounce
+      if (speechEndTimeoutRef.current) {
+        clearTimeout(speechEndTimeoutRef.current);
+        speechEndTimeoutRef.current = null;
+      }
+
       // Layer 1 — LOCAL: immediately stop audio playback (barge-in)
       audioPlayer.stop();
 
@@ -108,17 +123,23 @@ export default function SessionPage() {
       audioRecorder.resume();
     },
     onSpeechEnd: () => {
-      console.log("[VAD] Speech END");
+      console.log("[VAD] Speech END — debouncing 600ms");
 
-      // Update speaking state
-      isSpeakingRef.current = false;
-      setIsSpeaking(false);
+      // Debounce the transition to avoid orb flicker between
+      // idle ↔ listening when partial transcriptions arrive
+      speechEndTimeoutRef.current = setTimeout(() => {
+        speechEndTimeoutRef.current = null;
 
-      // Tell the server the user stopped speaking
-      sendJsonRef.current({ type: "activity_end" });
+        // Update speaking state
+        isSpeakingRef.current = false;
+        setIsSpeaking(false);
 
-      // Stop streaming PCM audio
-      audioRecorder.pause();
+        // Tell the server the user stopped speaking
+        sendJsonRef.current({ type: "activity_end" });
+
+        // Stop streaming PCM audio
+        audioRecorder.pause();
+      }, 600);
     },
   });
 
@@ -531,6 +552,7 @@ export default function SessionPage() {
       ) as HTMLVideoElement;
       if (videoEl) {
         await camera.init(videoEl);
+        setCameraReady(true);
         console.log(
           `[Session] Camera initialized — videoWidth=${videoEl.videoWidth}`,
         );
@@ -644,6 +666,7 @@ export default function SessionPage() {
     if (cameraOn) {
       camera.stop();
       setCameraOn(false);
+      setCameraReady(false);
       setPreviewVisible(false);
       // Stop any active burst frame streaming
       if (frameStreamIntervalRef.current) {
@@ -656,6 +679,7 @@ export default function SessionPage() {
       ) as HTMLVideoElement;
       if (videoEl) {
         camera.init(videoEl).then(() => {
+          setCameraReady(true);
           setCameraOn(true);
           setPreviewVisible(true);
           // Restart the 1 fps frame streaming interval so the model
@@ -836,7 +860,7 @@ export default function SessionPage() {
           <ResponsePreview response={finalResponse} />
 
           {/* Camera preview */}
-          <CameraPreview visible={showCameraPreview} />
+          <CameraPreview visible={showCameraPreview} ready={cameraReady} />
         </Box>
 
         {/* ── BOTTOM BAR ── */}
