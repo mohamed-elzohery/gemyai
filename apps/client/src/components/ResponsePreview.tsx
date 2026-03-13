@@ -240,28 +240,53 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
         </Box>
       )}
 
-      {/* Image → Full area image with fade-in/scale transition */}
+      {/* Image (annotated) → Shows in Orb area, replaces Orb */}
       {response.mode === "image" && response.imageUrl && (
         <>
           <Box
-            component="img"
-            src={response.imageUrl}
-            alt="AI response image"
-            onClick={() => setImageModalOpen(true)}
             sx={{
-              maxWidth: "100%",
-              maxHeight: "100%",
-              objectFit: "contain",
-              cursor: "pointer",
-              userSelect: "none",
-              WebkitTouchCallout: "none",
-              animation: "imageFadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
-              "@keyframes imageFadeIn": {
-                from: { opacity: 0, transform: "scale(0.92)" },
-                to: { opacity: 1, transform: "scale(1)" },
-              },
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              width: "100%",
+              height: "100%",
+              position: "relative",
             }}
-          />
+          >
+            <Box
+              sx={{
+                width: { xs: 280, sm: 340, md: 400 },
+                height: { xs: 280, sm: 340, md: 400 },
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: 3,
+                overflow: "hidden",
+              }}
+            >
+              <Box
+                component="img"
+                src={response.imageUrl}
+                alt="Annotated image"
+                onClick={() => setImageModalOpen(true)}
+                sx={{
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  objectFit: "contain",
+                  cursor: "pointer",
+                  userSelect: "none",
+                  WebkitTouchCallout: "none",
+                  borderRadius: 2,
+                  animation: "imageFadeIn 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
+                  "@keyframes imageFadeIn": {
+                    from: { opacity: 0, transform: "scale(0.92)" },
+                    to: { opacity: 1, transform: "scale(1)" },
+                  },
+                }}
+              />
+            </Box>
+          </Box>
           <ImageViewerModal
             open={imageModalOpen}
             imageUrl={response.imageUrl}

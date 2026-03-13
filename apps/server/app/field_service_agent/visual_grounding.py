@@ -25,6 +25,7 @@ from .frame_buffer import (
     get_latest_frame,
     store_annotated_image,
     pop_annotated_image,
+    get_buffer_session_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,17 +144,28 @@ async def annotate_image(query: str, tool_context: ToolContext) -> dict[str, str
     """
     # Use the WebSocket session ID stored in state (the ADK runner may
     # assign a different internal session ID).
-    session_id = tool_context.state.get("ws_session_id", tool_context.session.id)
+    ws_sid = tool_context.state.get("ws_session_id")
+    adk_sid = tool_context.session.id
+    session_id = ws_sid or adk_sid
     logger.info(
-        "[Annotation] annotate_image called: query=%r, session=%s", query, session_id
+        "[Annotation] annotate_image called: query=%r, session=%s "
+        "(ws_session_id=%s, adk_session_id=%s)",
+        query,
+        session_id,
+        ws_sid,
+        adk_sid,
     )
 
     # 1. Grab the latest camera frame from the shared buffer
     image_bytes = get_latest_frame(session_id)
 
     if not image_bytes:
+        available = get_buffer_session_ids()
         logger.warning(
-            "[Annotation] No camera image available for session %s", session_id
+            "[Annotation] No camera image available for session %s "
+            "(buffer has sessions: %s)",
+            session_id,
+            available,
         )
         return {
             "status": "error",

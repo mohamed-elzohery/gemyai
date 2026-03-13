@@ -325,6 +325,13 @@ async def websocket_endpoint(
                     )
                 ),
             ),
+            # Disable automatic (server-side) VAD — the client runs Silero
+            # VAD and sends activity_start / activity_end signals.
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    disabled=True
+                )
+            ),
             proactivity=(
                 types.ProactivityConfig(proactive_audio=True) if proactivity else None
             ),
@@ -426,21 +433,30 @@ async def websocket_endpoint(
                 text_data = message["text"]
                 json_message = json.loads(text_data)
 
+                # --- Activity signals (client-side VAD) ---
+                if json_message.get("type") == "activity_start":
+                    logger.info("[Upstream] ▲ activity_start (user speaking)")
+                    live_request_queue.send_activity_start()
+
+                elif json_message.get("type") == "activity_end":
+                    logger.info("[Upstream] ▲ activity_end (user stopped)")
+                    live_request_queue.send_activity_end()
+
                 # Extract text from JSON and send to LiveRequestQueue
-                if json_message.get("type") == "text":
+                elif json_message.get("type") == "text":
                     logger.info("[Upstream] ▲ text: %s", json_message["text"][:120])
                     content = types.Content(
                         parts=[types.Part(text=json_message["text"])]
                     )
                     live_request_queue.send_content(content)
 
-                # Handle image data — buffer only, do NOT send to model
+                # Handle image data — buffer AND send inline to model
                 elif json_message.get("type") == "image":
                     # Decode base64 image data
                     image_data = base64.b64decode(json_message["data"])
                     mime_type = json_message.get("mimeType", "image/jpeg")
-                    logger.debug(
-                        "[Upstream] ▲ image (%s, %d bytes) → buffer",
+                    logger.info(
+                        "[Upstream] ▲ image (%s, %d bytes) → buffer + model",
                         mime_type,
                         len(image_data),
                     )
@@ -448,6 +464,16 @@ async def websocket_endpoint(
                     # Store in the shared frame buffer (used by
                     # capture_frame / annotate_image tools on demand)
                     store_frame(session_id, image_data)
+
+                    # Also send inline to the native audio model so it
+                    # has casual visual context during the user's speech
+                    image_blob = types.Blob(mime_type=mime_type, data=image_data)
+                    live_request_queue.send_realtime(image_blob)
+                    logger.info(
+                        "[Upstream] Image queued to model (%d bytes, session %s)",
+                        len(image_data),
+                        session_id,
+                    )
 
                 else:
                     logger.info(
@@ -531,6 +557,12 @@ async def websocket_endpoint(
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     # --- 1. Intercept function_call events for internal tools ---
+                    # NOTE: With native audio BIDI streaming, ADK executes
+                    # tools internally and does NOT yield function_call /
+                    # function_response events in the downstream stream.
+                    # This interception code only activates with half-cascade
+                    # models.  For native-audio, the delivery_task handles
+                    # annotated-image and report delivery via polling.
                     if (
                         part.function_call
                         and part.function_call.name in _INTERNAL_TOOLS
@@ -708,8 +740,18 @@ async def websocket_endpoint(
 
     async def delivery_task() -> None:
         """Periodically deliver annotated images & reports to the client."""
+        poll_count = 0
         while True:
             await asyncio.sleep(_DELIVERY_POLL_INTERVAL)
+            poll_count += 1
+
+            # Heartbeat every ~30s (100 polls at 300ms)
+            if poll_count % 100 == 0:
+                logger.info(
+                    "[Delivery] heartbeat — alive, session=%s, %d polls",
+                    session_id,
+                    poll_count,
+                )
 
             # --- Annotated image ---
             annotated_b64 = get_annotated_image(session_id)
@@ -731,16 +773,13 @@ async def websocket_endpoint(
                         )
                     )
                 except Exception as exc:
-                    logger.error(
-                        "[Delivery] Failed to send annotated image: %s", exc
-                    )
+                    logger.error("[Delivery] Failed to send annotated image: %s", exc)
 
             # --- PDF report ---
             report_pdf = pop_pending_report(session_id)
             if report_pdf:
                 logger.info(
-                    "[Delivery] Sending PDF report to client "
-                    "(%d bytes, session %s)",
+                    "[Delivery] Sending PDF report to client " "(%d bytes, session %s)",
                     len(report_pdf),
                     session_id,
                 )
@@ -749,25 +788,19 @@ async def websocket_endpoint(
                         json.dumps(
                             {
                                 "type": "report_ready",
-                                "data": base64.b64encode(report_pdf).decode(
-                                    "ascii"
-                                ),
+                                "data": base64.b64encode(report_pdf).decode("ascii"),
                                 "mimeType": "application/pdf",
                                 "filename": "fix_report.pdf",
                             }
                         )
                     )
                 except Exception as exc:
-                    logger.error(
-                        "[Delivery] Failed to send PDF report: %s", exc
-                    )
+                    logger.error("[Delivery] Failed to send PDF report: %s", exc)
 
     # Run all three tasks concurrently
     # Exceptions from any task will propagate and cancel the others
     try:
-        await asyncio.gather(
-            upstream_task(), downstream_task(), delivery_task()
-        )
+        await asyncio.gather(upstream_task(), downstream_task(), delivery_task())
     except WebSocketDisconnect:
         logger.debug("Client disconnected normally")
     except Exception as e:

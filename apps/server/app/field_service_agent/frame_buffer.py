@@ -57,7 +57,7 @@ def store_frame(session_id: str, image_bytes: bytes) -> None:
     with _lock:
         buf = _frame_buffers.setdefault(session_id, deque(maxlen=BUFFER_MAX_FRAMES))
         buf.append((time.time(), image_bytes))
-    logger.debug(
+    logger.info(
         "[FrameBuffer] Stored frame for session %s (buffer size: %d)",
         session_id,
         len(buf),
@@ -128,6 +128,11 @@ def pop_annotated_image(session_id: str) -> str | None:
     with _lock:
         result = _annotated_images.pop(session_id, None)
         if result:
+            logger.info(
+                "[FrameBuffer] pop_annotated_image(%s) → found (%d chars b64)",
+                session_id,
+                len(result),
+            )
             return result
         if _annotated_images:
             fallback_sid, result = _annotated_images.popitem()
@@ -138,6 +143,11 @@ def pop_annotated_image(session_id: str) -> str | None:
                 fallback_sid,
             )
             return result
+        logger.debug(
+            "[FrameBuffer] pop_annotated_image(%s) → nothing (available keys: %s)",
+            session_id,
+            list(_annotated_images.keys()),
+        )
         return None
 
 
@@ -177,6 +187,17 @@ def pop_pending_report(session_id: str) -> bytes | None:
             )
             return result
         return None
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+
+
+def get_buffer_session_ids() -> list[str]:
+    """Return the list of session IDs that have frames in the buffer."""
+    with _lock:
+        return list(_frame_buffers.keys())
 
 
 # ---------------------------------------------------------------------------

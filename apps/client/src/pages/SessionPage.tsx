@@ -18,6 +18,7 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import { useAudioPlayer } from "../hooks/useAudioPlayer";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { useCamera } from "../hooks/useCamera";
+import { useVAD } from "../hooks/useVAD";
 import { base64ToArray } from "../utils/audio";
 import { cleanCJKSpaces, randomId } from "../utils/textHelpers";
 import { useAuth } from "../contexts/AuthContext";
@@ -41,10 +42,12 @@ export default function SessionPage() {
   const [sessionStarted, setSessionStarted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const isSpeakingRef = useRef(false);
-  const isSpeakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+  const isAudioRef = useRef(false);
+
+  // ---- Continuous 1 fps frame streaming (while camera is active) ----
+  const frameStreamIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
-  const isAudioRef = useRef(false);
 
   // ---- Controls state ----
   const [cameraOn, setCameraOn] = useState(true);
@@ -70,11 +73,6 @@ export default function SessionPage() {
   const agentStatusIdRef = useRef<string | null>(null);
   const groundingLoadingIdRef = useRef<string | null>(null);
 
-  // ---- Image streaming (continuous 1fps) ----
-  const imageStreamIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
-    null,
-  );
-
   // ---- Helpers to update messages by ID ----
   const addMessage = useCallback((msg: ChatMessage) => {
     setMessages((prev) => [...prev, msg]);
@@ -96,7 +94,39 @@ export default function SessionPage() {
   const audioRecorder = useAudioRecorder();
   const camera = useCamera();
 
-  // ---- Snapshot capture & send (continuous 1fps, independent of speech) ----
+  // ---- VAD: client-side Silero voice activity detection ----
+  const vad = useVAD({
+    onSpeechStart: () => {
+      console.log("[VAD] Speech START");
+      // Layer 1 — LOCAL: immediately stop audio playback (barge-in)
+      audioPlayer.stop();
+
+      // Update speaking state
+      isSpeakingRef.current = true;
+      setIsSpeaking(true);
+
+      // Layer 2 — REMOTE: tell the server the user started speaking
+      sendJsonRef.current({ type: "activity_start" });
+
+      // Start streaming PCM audio to server
+      audioRecorder.resume();
+    },
+    onSpeechEnd: () => {
+      console.log("[VAD] Speech END");
+
+      // Update speaking state
+      isSpeakingRef.current = false;
+      setIsSpeaking(false);
+
+      // Tell the server the user stopped speaking
+      sendJsonRef.current({ type: "activity_end" });
+
+      // Stop streaming PCM audio
+      audioRecorder.pause();
+    },
+  });
+
+  // ---- Snapshot capture & send (continuous 1 fps while camera active) ----
   const sendJsonRef = useRef<(data: unknown) => void>(() => {});
 
   const captureAndSendSnapshot = useCallback(() => {
@@ -284,28 +314,12 @@ export default function SessionPage() {
       }
 
       // --- Input transcription ---
+      // NOTE: isSpeaking state is now driven by client-side VAD (useVAD hook),
+      // NOT by inputTranscription events. We only use transcription for
+      // displaying the user's speech text.
       if (adkEvent.inputTranscription?.text) {
         const txt = adkEvent.inputTranscription.text;
         const finished = adkEvent.inputTranscription.finished;
-
-        // Mark as speaking while partial
-        if (!finished) {
-          isSpeakingRef.current = true;
-          setIsSpeaking(true);
-          // immediately stop audio playback when user starts speaking
-          audioPlayer.stop();
-          if (isSpeakingTimeoutRef.current)
-            clearTimeout(isSpeakingTimeoutRef.current);
-          isSpeakingTimeoutRef.current = setTimeout(() => {
-            isSpeakingRef.current = false;
-            setIsSpeaking(false);
-          }, 1500); // 1.5 seconds timeout
-        } else {
-          isSpeakingRef.current = false;
-          setIsSpeaking(false);
-          if (isSpeakingTimeoutRef.current)
-            clearTimeout(isSpeakingTimeoutRef.current);
-        }
 
         const nonLatin = txt.match(
           /[^\u0000-\u007F\u00C0-\u024F\s.,!?'"():\d-]/g,
@@ -511,16 +525,28 @@ export default function SessionPage() {
       await audioPlayer.init();
       await audioRecorder.init(audioRecorderHandler);
 
+      // Initialize VAD using the same mic stream as the recorder
+      const micStream = audioRecorder.getStream();
+      if (micStream) {
+        await vad.init(micStream);
+        console.log(
+          "[Session] VAD initialized — audio paused until speech detected",
+        );
+      }
+
       isAudioRef.current = true;
       setSessionStarted(true);
 
-      // Start continuous 1fps camera frame streaming to the server
-      if (imageStreamIntervalRef.current)
-        clearInterval(imageStreamIntervalRef.current);
-      imageStreamIntervalRef.current = setInterval(
+      // Start continuous 1 fps frame streaming so the model always has
+      // visual context and the frame buffer is warm for tool calls.
+      captureAndSendSnapshot(); // immediate first frame
+      if (frameStreamIntervalRef.current)
+        clearInterval(frameStreamIntervalRef.current);
+      frameStreamIntervalRef.current = setInterval(
         captureAndSendSnapshot,
-        1000,
+        1000, // 1 fps — matches ADK recommended max
       );
+      console.log("[Session] Started 1 fps background frame streaming");
     } catch (err: unknown) {
       const error = err as Error;
       console.error("Session start failed:", error.message);
@@ -531,19 +557,21 @@ export default function SessionPage() {
     audioPlayer,
     audioRecorder,
     audioRecorderHandler,
+    vad,
     captureAndSendSnapshot,
   ]);
 
   // ---- End session ----
   const endSession = useCallback(() => {
+    vad.destroy();
     camera.stop();
     audioRecorder.stopMic();
     audioPlayer.stop();
     isAudioRef.current = false;
 
-    if (imageStreamIntervalRef.current) {
-      clearInterval(imageStreamIntervalRef.current);
-      imageStreamIntervalRef.current = null;
+    if (frameStreamIntervalRef.current) {
+      clearInterval(frameStreamIntervalRef.current);
+      frameStreamIntervalRef.current = null;
     }
 
     // Revoke report blob URLs to free memory
@@ -555,7 +583,7 @@ export default function SessionPage() {
     });
 
     navigate("/");
-  }, [camera, audioRecorder, audioPlayer, navigate]);
+  }, [vad, camera, audioRecorder, audioPlayer, navigate]);
 
   // ---- Auto-start session on mount ----
   const sessionInitRef = useRef(false);
@@ -610,10 +638,10 @@ export default function SessionPage() {
       camera.stop();
       setCameraOn(false);
       setPreviewVisible(false);
-      // Stop frame streaming while camera is off
-      if (imageStreamIntervalRef.current) {
-        clearInterval(imageStreamIntervalRef.current);
-        imageStreamIntervalRef.current = null;
+      // Stop any active burst frame streaming
+      if (frameStreamIntervalRef.current) {
+        clearInterval(frameStreamIntervalRef.current);
+        frameStreamIntervalRef.current = null;
       }
     } else {
       const videoEl = document.getElementById(
@@ -623,17 +651,12 @@ export default function SessionPage() {
         camera.init(videoEl).then(() => {
           setCameraOn(true);
           setPreviewVisible(true);
-          // Restart continuous 1fps frame streaming
-          if (imageStreamIntervalRef.current)
-            clearInterval(imageStreamIntervalRef.current);
-          imageStreamIntervalRef.current = setInterval(
-            captureAndSendSnapshot,
-            1000,
-          );
+          // Frame streaming will resume automatically via VAD when
+          // the user next speaks — no continuous interval needed.
         });
       }
     }
-  }, [cameraOn, camera, captureAndSendSnapshot]);
+  }, [cameraOn, camera]);
 
   const handleToggleMic = useCallback(() => {
     setMicOn((prev) => !prev);
