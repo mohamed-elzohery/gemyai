@@ -130,7 +130,6 @@ export type ChatMessageType =
     | "input-transcription"
     | "output-transcription"
     | "report-attachment";
-    | "report-attachment";
 
 export interface ChatMessage {
     id: string;
