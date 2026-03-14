@@ -12,12 +12,21 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
     this.writeIndex = 0;
     this.readIndex = 0;
 
+    // Track whether we are actively outputting audio so the main thread
+    // can drive UI states (orb "talking", text reveal) from real playback.
+    this._wasPlaying = false;
+
     // Handle incoming messages from main thread
     this.port.onmessage = (event) => {
       // Reset the buffer when 'endOfAudio' message received
       if (event.data.command === "endOfAudio") {
         this.readIndex = this.writeIndex; // Clear the buffer
         console.log("endOfAudio received, clearing the buffer.");
+        // Immediately report that playback stopped
+        if (this._wasPlaying) {
+          this._wasPlaying = false;
+          this.port.postMessage({ type: "playbackState", playing: false });
+        }
         return;
       }
 
@@ -52,6 +61,9 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
     // Write a frame to the output
     const output = outputs[0];
     const framesPerBlock = output[0].length;
+
+    const isPlaying = this.readIndex !== this.writeIndex;
+
     for (let frame = 0; frame < framesPerBlock; frame++) {
       // Write the sample(s) into the output buffer
       output[0][frame] = this.buffer[this.readIndex]; // left channel
@@ -63,6 +75,18 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
       if (this.readIndex != this.writeIndex) {
         this.readIndex = (this.readIndex + 1) % this.bufferSize;
       }
+    }
+
+    // Detect transitions: not-playing → playing, or playing → not-playing
+    const nowPlaying = this.readIndex !== this.writeIndex;
+    if (isPlaying && !nowPlaying && this._wasPlaying) {
+      // Buffer just drained — playback stopped
+      this._wasPlaying = false;
+      this.port.postMessage({ type: "playbackState", playing: false });
+    } else if (!this._wasPlaying && isPlaying) {
+      // Buffer just started being consumed — playback started
+      this._wasPlaying = true;
+      this.port.postMessage({ type: "playbackState", playing: true });
     }
 
     // Returning true tells the system to keep the processor alive

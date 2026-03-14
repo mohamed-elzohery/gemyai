@@ -374,6 +374,9 @@ async def websocket_endpoint(
         session.state["ws_session_id"] = session_id
     live_request_queue = LiveRequestQueue()
 
+    # Event used to signal all background tasks to stop when the session ends
+    session_closed = asyncio.Event()
+
     # ========================================
     # Phase 2b: Send welcome message (new sessions only)
     # ========================================
@@ -741,8 +744,16 @@ async def websocket_endpoint(
     async def delivery_task() -> None:
         """Periodically deliver annotated images & reports to the client."""
         poll_count = 0
-        while True:
-            await asyncio.sleep(_DELIVERY_POLL_INTERVAL)
+        while not session_closed.is_set():
+            # Sleep with cancellation awareness — exits promptly when session closes
+            try:
+                await asyncio.wait_for(
+                    session_closed.wait(), timeout=_DELIVERY_POLL_INTERVAL
+                )
+                # If we reach here, session_closed was set — exit loop
+                break
+            except asyncio.TimeoutError:
+                pass  # Normal timeout — continue polling
             poll_count += 1
 
             # Heartbeat every ~30s (100 polls at 300ms)
@@ -772,8 +783,13 @@ async def websocket_endpoint(
                             }
                         )
                     )
-                except Exception as exc:
+                except (WebSocketDisconnect, Exception) as exc:
                     logger.error("[Delivery] Failed to send annotated image: %s", exc)
+                    if isinstance(exc, WebSocketDisconnect):
+                        logger.info(
+                            "[Delivery] Client disconnected — stopping delivery task"
+                        )
+                        return
 
             # --- PDF report ---
             report_pdf = pop_pending_report(session_id)
@@ -794,8 +810,17 @@ async def websocket_endpoint(
                             }
                         )
                     )
-                except Exception as exc:
+                except (WebSocketDisconnect, Exception) as exc:
                     logger.error("[Delivery] Failed to send PDF report: %s", exc)
+                    if isinstance(exc, WebSocketDisconnect):
+                        logger.info(
+                            "[Delivery] Client disconnected — stopping delivery task"
+                        )
+                        return
+
+        logger.info(
+            "[Delivery] Task stopped (session_closed set, session=%s)", session_id
+        )
 
     # Run all three tasks concurrently
     # Exceptions from any task will propagate and cancel the others
@@ -809,6 +834,9 @@ async def websocket_endpoint(
         # ========================================
         # Phase 4: Session Termination
         # ========================================
+
+        # Signal all background tasks to stop
+        session_closed.set()
 
         # Always close the queue, even if exceptions occurred
         logger.debug("Closing live_request_queue")

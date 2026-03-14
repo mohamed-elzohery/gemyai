@@ -93,6 +93,16 @@ export default function SessionPage() {
   const audioRecorder = useAudioRecorder();
   const camera = useCamera();
 
+  // ---- Audio playback state (driven by worklet, not WS streaming) ----
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+
+  // Wire up the worklet playback callback once on mount
+  useEffect(() => {
+    audioPlayer.onPlaybackStateChange((playing: boolean) => {
+      setIsAudioPlaying(playing);
+    });
+  }, [audioPlayer]);
+
   // ---- Debounce timer for speech-end to prevent orb flicker ----
   const speechEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -751,6 +761,7 @@ export default function SessionPage() {
         mode: "text",
         text: latestText.text,
         isPartial: latestText.isPartial,
+        isAudioPlaying,
       };
 
     // If user is speaking (VAD detected), show listening
@@ -765,7 +776,7 @@ export default function SessionPage() {
   // regardless of previous response mode (stale agent messages, etc.)
   const finalResponse: ResponseState = isSpeaking
     ? { mode: "listening" }
-    : responseState;
+    : { ...responseState, isAudioPlaying };
 
   // Log response state changes for debugging
   useEffect(() => {

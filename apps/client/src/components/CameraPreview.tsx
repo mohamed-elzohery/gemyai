@@ -74,8 +74,8 @@ export default function CameraPreview({
           width: "100%",
           borderRadius: "10px",
           transform: "scaleX(-1)",
-          height: { xs: "auto", lg: "100%" },
-          objectFit: { xs: "contain", lg: "cover" },
+          height: "100%",
+          objectFit: "contain",
           /* Fade in once stream is ready — prevents black flash */
           opacity: ready ? 1 : 0,
           transition: "opacity 0.3s ease",
