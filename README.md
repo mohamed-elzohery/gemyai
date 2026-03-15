@@ -80,6 +80,27 @@ Built for the **Gemini Live Agent Challenge**, Gemy AI showcases the full power 
 
 ## Architecture
 
+<p align="center">
+  <img src="docs/system-design.png" alt="Gemy AI System Design" width="100%" />
+</p>
+
+The system is composed of three main layers:
+
+- **Client (React SPA)** — Runs in the browser with a Three.js/WebGL animated orb, camera preview, chat panel, and an audio pipeline (PCM Recorder at 16kHz, PCM Player at 24kHz, Silero VAD for voice activity detection). Captures JPEG frames at ~1 fps and communicates with the backend over a single bidirectional WebSocket connection.
+
+- **Backend (FastAPI + Google ADK on Cloud Run)** — Handles WebSocket sessions at `/ws/{userId}/{sessionId}` with three concurrent async tasks (upstream, downstream, delivery). Includes an auth layer (Google OAuth + JWT HttpOnly cookies), a Google ADK Runner with `LiveRequestQueue` for bidirectional streaming, and a 5-frame rolling buffer per session. In-memory services manage session artifacts and events. Firebase Firestore stores user profiles, and Google Secret Manager holds API keys and service account credentials.
+
+- **Gemy — Field Service Agent** — The AI core powered by two Gemini models:
+  - **Gemini 2.5 Flash** (native audio preview) — Handles real-time voice conversation and tool orchestration.
+  - **Gemini 3 Flash** (preview) — Performs frame analysis, visual grounding, and structured data extraction for reports.
+  
+  The agent has four tools: `capture_frame` (vision analysis), `annotate_image` (visual grounding with bounding boxes via Pillow), `generate_fix_report` (PDF report generation via FPDF2), and `google_search` (web research for technical documentation). The root agent follows an Intake → Diagnose → Plan → Execute → Wrap-up workflow.
+
+- **Google Cloud Platform** — Cloud Build + Artifact Registry deploy to Cloud Run via a multi-stage Docker build (Node 20 + Python 3.12). Secret Manager injects credentials at runtime.
+
+<details>
+<summary><strong>ASCII Diagram (Text Version)</strong></summary>
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              Client (React + Vite)                          │
@@ -136,6 +157,8 @@ Built for the **Gemini Live Agent Challenge**, Gemy AI showcases the full power 
 │  └────────────────────┘  └─────────────────┘                                │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+</details>
 
 ---
 
