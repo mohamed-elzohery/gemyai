@@ -122,7 +122,9 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
     prevRawLenRef.current = rawText.length;
   }, [rawText]);
 
-  // Flush remaining queue when turn completes
+  // Flush remaining queue when turn completes — show the FULL revealed
+  // text so the welcome message (and other complete responses) are never
+  // truncated by the sliding-window `lastNWords`.
   useEffect(() => {
     if (
       response.mode === "text" &&
@@ -131,9 +133,9 @@ export default function ResponsePreview({ response }: ResponsePreviewProps) {
     ) {
       revealedWordsRef.current.push(...wordQueueRef.current);
       wordQueueRef.current = [];
-      setDisplayText(lastNWords(revealedWordsRef.current.join(" "), maxWords));
+      setDisplayText(revealedWordsRef.current.join(" "));
     }
-  }, [response.isPartial, response.mode, maxWords]);
+  }, [response.isPartial, response.mode]);
 
   // Reveal timer — pops words only while audio is playing
   const revealWord = useCallback(() => {

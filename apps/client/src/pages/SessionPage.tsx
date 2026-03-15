@@ -53,6 +53,7 @@ export default function SessionPage() {
 
   // ---- Camera ready (prevents black flash on first mount) ----
   const [cameraReady, setCameraReady] = useState(false);
+  const [isFrontCamera, setIsFrontCamera] = useState(true);
 
   // ---- Confirm dialog ----
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -563,6 +564,7 @@ export default function SessionPage() {
       if (videoEl) {
         await camera.init(videoEl);
         setCameraReady(true);
+        setIsFrontCamera(camera.facingModeRef.current === "user");
         console.log(
           `[Session] Camera initialized — videoWidth=${videoEl.videoWidth}`,
         );
@@ -690,6 +692,7 @@ export default function SessionPage() {
       if (videoEl) {
         camera.init(videoEl).then(() => {
           setCameraReady(true);
+          setIsFrontCamera(camera.facingModeRef.current === "user");
           setCameraOn(true);
           setPreviewVisible(true);
           // Restart the 1 fps frame streaming interval so the model
@@ -708,8 +711,9 @@ export default function SessionPage() {
     setPreviewVisible((prev) => !prev);
   }, []);
 
-  const handleSwitchCamera = useCallback(() => {
-    camera.switchCamera();
+  const handleSwitchCamera = useCallback(async () => {
+    await camera.switchCamera();
+    setIsFrontCamera(camera.facingModeRef.current === "user");
   }, [camera]);
 
   // ---- Derive response state from messages ----
@@ -871,7 +875,11 @@ export default function SessionPage() {
           <ResponsePreview response={finalResponse} />
 
           {/* Camera preview */}
-          <CameraPreview visible={showCameraPreview} ready={cameraReady} />
+          <CameraPreview
+            visible={showCameraPreview}
+            ready={cameraReady}
+            isFrontCamera={isFrontCamera}
+          />
         </Box>
 
         {/* ── BOTTOM BAR ── */}

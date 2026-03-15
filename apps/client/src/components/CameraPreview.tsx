@@ -7,11 +7,14 @@ interface CameraPreviewProps {
   visible: boolean;
   /** Whether the camera stream is actually playing (prevents black flash) */
   ready?: boolean;
+  /** Whether the camera is using the front-facing ("user") camera. */
+  isFrontCamera?: boolean;
 }
 
 export default function CameraPreview({
   visible,
   ready = true,
+  isFrontCamera = true,
 }: CameraPreviewProps) {
   return (
     <Box
@@ -23,9 +26,11 @@ export default function CameraPreview({
           overflow: "hidden",
           maxWidth: 1000,
           maxHeight: 1000,
-          /* collapse transitions */
+          /* collapse transitions — opacity is handled on the <video> only
+             to prevent the container + video fading in at different rates
+             (caused a double-flicker on mobile). */
           transition:
-            "flex 0.4s ease, max-height 0.4s ease, max-width 0.4s ease, min-width 0.4s ease, opacity 0.35s ease, padding 0.4s ease, margin 0.4s ease",
+            "flex 0.4s ease, max-height 0.4s ease, max-width 0.4s ease, min-width 0.4s ease, padding 0.4s ease, margin 0.4s ease",
         },
         /* Mobile (xs): 1/3 of parent when visible */
         visible
@@ -73,12 +78,13 @@ export default function CameraPreview({
           display: "block",
           width: "100%",
           borderRadius: "10px",
-          transform: "scaleX(-1)",
+          /* Mirror only for selfie (front) camera */
+          transform: isFrontCamera ? "scaleX(-1)" : "none",
           height: "100%",
           objectFit: "contain",
           /* Fade in once stream is ready — prevents black flash */
           opacity: ready ? 1 : 0,
-          transition: "opacity 0.3s ease",
+          transition: "opacity 0.4s ease",
         }}
       />
 
